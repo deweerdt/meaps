@@ -13,6 +13,8 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
+#include "picohttpparser.h"
+
 struct st_meaps_conn_t;
 
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
@@ -28,6 +30,15 @@ meaps_iovec_t meaps_iovec_init(char *base, size_t len)
 {
     return (meaps_iovec_t){ base, len };
 }
+
+meaps_iovec_t meaps_iovec_dup(char *base, size_t len)
+{
+    meaps_iovec_t iov = { malloc(len), len};
+    memcpy(iov.base, base, len);
+    return iov;
+}
+
+/***/
 
 typedef struct st_meaps_header_t {
     meaps_iovec_t name;
@@ -177,24 +188,6 @@ int meaps_url_to_sockaddr(meaps_url_t *url, struct sockaddr_storage *ss)
 
 /***/
 
-typedef struct st_meaps_request_t {
-    meaps_iovec_t method;
-    meaps_url_t url;
-    meaps_header_t *headers;
-    size_t nr_headers;
-} meaps_request_t;
-
-void meaps_request_add_header(meaps_request_t *req, meaps_iovec_t name, meaps_iovec_t value)
-{
-    req->headers = realloc(req->headers, sizeof(*req->headers) * (req->nr_headers + 1));
-    req->headers[req->nr_headers].name = name;
-    req->headers[req->nr_headers].value = value;
-    req->nr_headers++;
-    return;
-}
-
-/***/
-
 typedef struct st_meaps_buffer_t {
     char *base;
     size_t idx;
@@ -240,6 +233,37 @@ meaps_iovec_t meaps_buffer_get_iovec(meaps_buffer_t *buf)
 {
     return meaps_iovec_init(&buf->base[buf->idx], buf->len - buf->idx);
 }
+
+
+/***/
+
+typedef struct st_meaps_request_t {
+    meaps_iovec_t method;
+    meaps_url_t url;
+    meaps_header_t *headers;
+    size_t nr_headers;
+    struct {
+        int minor_version, status;
+        meaps_iovec_t msg;
+        struct phr_header headers[100];
+        size_t nr_headers;
+        size_t content_length;
+        int is_chunked;
+        int keep_alive;
+        meaps_buffer_t body;
+        struct phr_chunked_decoder chunked_decoder;
+    } res;
+} meaps_request_t;
+
+void meaps_request_add_header(meaps_request_t *req, meaps_iovec_t name, meaps_iovec_t value)
+{
+    req->headers = realloc(req->headers, sizeof(*req->headers) * (req->nr_headers + 1));
+    req->headers[req->nr_headers].name = name;
+    req->headers[req->nr_headers].value = value;
+    req->nr_headers++;
+    return;
+}
+
 /***/
 
 typedef void (*meaps_conn_cb)(struct st_meaps_conn_t *, const char *);
@@ -257,6 +281,7 @@ typedef struct st_meaps_conn_t {
 const char *meaps_err_connection_error = "connection error";
 const char *meaps_err_invalid_url = "invalid url";
 const char *meaps_err_connection_closed = "connection closed";
+const char *meaps_err_connection_closed_prematurely = "connection closed prematurely";
 const char *meaps_err_io_error = "I/O error";
 
 void meaps_loop_wait_write(struct st_meaps_loop_t *loop, struct st_meaps_conn_t *conn);
@@ -296,6 +321,12 @@ void meaps_conn_connect(meaps_conn_t *conn, struct st_meaps_loop_t *loop, struct
     meaps_buffer_init(&conn->wbuffer);
     meaps_buffer_init(&conn->rbuffer);
     meaps_conn_wait_write(conn, cb);
+}
+
+void meaps_conn_close(meaps_conn_t *conn)
+{
+    close(conn->fd);
+    conn->fd = -1;
 }
 
 /***/
@@ -358,21 +389,27 @@ int meaps_loop_run(meaps_loop_t *loop, int timeout)
             continue;
         }
         if (events[n].events & EPOLLIN) {
+            ssize_t rret;
             while (1) {
-                ssize_t rret;
                 meaps_buffer_expand(&conn->rbuffer, 4096);
                 while ((rret = read(conn->fd, conn->rbuffer.base + conn->rbuffer.len, conn->rbuffer.cap)) == -1 && errno == EINTR)
                         ;
                 if (rret < 0) {
                     if (errno != EAGAIN) {
                         conn->cb(conn, "read error");
-                        continue;
+                        break;
                     }
+                    break;
+                } else if (rret == 0) {
                     break;
                 }
                 conn->rbuffer.len += rret;
             }
-            conn->cb(conn, NULL);
+            if (rret == 0) {
+                conn->cb(conn, meaps_err_connection_closed);
+            } else {
+                conn->cb(conn, NULL);
+            }
         }
         if (events[n].events & EPOLLOUT) {
             ssize_t wret;
@@ -412,15 +449,16 @@ typedef struct st_meaps_http1client_t {
         meaps_http1client_cb on_connect;
         meaps_http1client_cb on_request_sent;
         meaps_http1client_cb on_response_head;
+        meaps_http1client_cb on_response_body;
     };
 } meaps_http1client_t;
 
 meaps_http1client_t *meaps_http1client_create(meaps_loop_t *loop)
 {
-    meaps_http1client_t *h1client;
-    h1client = calloc(1, sizeof(*h1client));
-    h1client->loop = loop;
-    return h1client;
+    meaps_http1client_t *client;
+    client = calloc(1, sizeof(*client));
+    client->loop = loop;
+    return client;
 }
 
 
@@ -430,24 +468,24 @@ meaps_http1client_t *meaps_http1client_create(meaps_loop_t *loop)
 
 void meaps_http1client_on_connect(meaps_conn_t *conn, const char *err)
 {
-    meaps_http1client_t *h1client = container_of(conn, meaps_http1client_t, conn);
-    h1client->on_connect(h1client, err);
+    meaps_http1client_t *client = container_of(conn, meaps_http1client_t, conn);
+    client->on_connect(client, err);
 }
 
 void meaps_http1client_request_sent(meaps_conn_t *conn, const char *err)
 {
-    meaps_http1client_t *h1client = container_of(conn, meaps_http1client_t, conn);
-    h1client->on_request_sent(h1client, err);
+    meaps_http1client_t *client = container_of(conn, meaps_http1client_t, conn);
+    client->on_request_sent(client, err);
 }
 
-void meaps_http1client_connect(meaps_http1client_t *h1client, meaps_url_t *url, meaps_http1client_cb on_connect_cb)
+void meaps_http1client_connect(meaps_http1client_t *client, meaps_url_t *url, meaps_http1client_cb on_connect_cb)
 {
-    if (!meaps_url_to_sockaddr(url, &h1client->ss_dst)) {
-        on_connect_cb(h1client, meaps_err_invalid_url);
+    if (!meaps_url_to_sockaddr(url, &client->ss_dst)) {
+        on_connect_cb(client, meaps_err_invalid_url);
         return;
     }
-    h1client->on_connect = on_connect_cb;
-    meaps_conn_connect(&h1client->conn, h1client->loop, &h1client->ss_dst, meaps_http1client_on_connect);
+    client->on_connect = on_connect_cb;
+    meaps_conn_connect(&client->conn, client->loop, &client->ss_dst, meaps_http1client_on_connect);
 }
 
 #define CRLF "\r\n"
@@ -476,35 +514,202 @@ void meaps_http1client_write_request(meaps_http1client_t *client, meaps_request_
     meaps_conn_wait_write(&client->conn, meaps_http1client_request_sent);
 }
 
+ssize_t parse_content_length(const char *base, size_t len)
+{
+    ssize_t ret = 0;
+    const char *end = base + len;
+    while (base < end && isspace(*base)) {
+        base++;
+    }
+    while (base < end) {
+        if (*base < '0' || *base > '9')
+            return -1;
+        ret = ret * 10 + *base - '0';
+        base++;
+    }
+    return ret;
+}
+
 void on_read_head(meaps_conn_t *conn, const char *err)
 {
-    meaps_http1client_t *h1client = container_of(conn, meaps_http1client_t, conn);
-    h1client->on_response_head(h1client, err);
+    meaps_iovec_t iov;
+    int pret;
+    meaps_http1client_t *client = container_of(conn, meaps_http1client_t, conn);
+    meaps_request_t *req;
+
+    if (err != NULL && err != meaps_err_connection_closed) {
+        goto out;
+    }
+
+    req = client->req;
+    iov = meaps_buffer_get_iovec(&client->conn.rbuffer);
+    req->res.nr_headers = ARRAY_SIZE(req->res.headers);
+    pret = phr_parse_response(iov.base, iov.len, &req->res.minor_version, &req->res.status, (const char **)&req->res.msg.base, &req->res.msg.len, req->res.headers, &req->res.nr_headers, 0);
+    if (pret == -1) {
+        err = "failed to parse response";
+        goto out;
+    }
+
+    if (pret == -2) {
+        if (err == meaps_err_connection_closed) {
+            err = meaps_err_connection_closed_prematurely;
+            goto out;
+        }
+        meaps_conn_read(conn, on_read_head);
+        return;
+    }
+
+    req->res.content_length = SIZE_MAX;
+    req->res.is_chunked = 0;
+    req->res.keep_alive = 1;
+    meaps_buffer_init(&req->res.body);
+    int transfer_encoding_seen = 0, content_length_seen = 0;
+    for (int i = 0; i < req->res.nr_headers; i++) {
+        if (!strncasecmp(req->res.headers[i].name, "content-length", req->res.headers[i].name_len)) {
+            ssize_t cl;
+            if (content_length_seen) {
+                err = "two content-length headers seen";
+                goto out;
+            }
+            content_length_seen = 1;
+            cl = parse_content_length(req->res.headers[i].value, req->res.headers[i].value_len);
+            if (cl < 0) {
+                err = "invalid content-length: header";
+                goto out;
+            }
+            req->res.content_length = cl;
+        } else if (!strncasecmp(req->res.headers[i].name, "transfer-encoding", req->res.headers[i].name_len)) {
+            if (transfer_encoding_seen) {
+                err = "two transfer-encoding headers seen";
+                goto out;
+            }
+            transfer_encoding_seen = 1;
+            if (!strncasecmp(req->res.headers[i].value, "chunked", req->res.headers[i].value_len)) {
+                req->res.is_chunked = 1;
+                memset(&req->res.chunked_decoder, 0, sizeof(req->res.chunked_decoder));
+            }
+        } else if (!strncasecmp(req->res.headers[i].name, "connection", req->res.headers[i].name_len)) {
+            if (strncasecmp(req->res.headers[i].value, "close", req->res.headers[i].value_len)) {
+                req->res.keep_alive = 0;
+            }
+        }
+    }
+    //fprintf(stderr, "cl: %zu, chunked: %d, ka: %d\n", req->res.content_length, req->res.is_chunked, req->res.keep_alive);
+
+    meaps_buffer_consume(&client->conn.rbuffer, pret);
+out:
+    client->on_response_head(client, err);
 
 }
 
-void meaps_http1client_read_response(meaps_http1client_t *client, meaps_http1client_cb on_response_head)
+void meaps_http1client_read_response_head(meaps_http1client_t *client, meaps_http1client_cb on_response_head)
 {
     client->on_response_head = on_response_head;
     meaps_conn_read(&client->conn, on_read_head);
 }
 
+void on_read_body(meaps_conn_t *conn, const char *err)
+{
+    meaps_iovec_t iov;
+    meaps_http1client_t *client = container_of(conn, meaps_http1client_t, conn);
+
+    if (client->req->res.content_length != SIZE_MAX) {
+        iov = meaps_buffer_get_iovec(&conn->rbuffer);
+        if (iov.len != client->req->res.content_length)
+            goto read_more;
+        meaps_buffer_write(&client->req->res.body, iov.base, iov.len);
+        meaps_buffer_consume(&conn->rbuffer, iov.len);
+        client->on_response_body(client, NULL);
+        return;
+
+    } else if (!client->req->res.is_chunked) {
+        /* connection close */
+        assert(client->req->res.keep_alive == 0);
+        if (err == NULL)
+            goto read_more;
+        if (err == meaps_err_connection_closed) {
+            client->on_response_body(client, NULL);
+        } else {
+            client->on_response_body(client, err);
+        }
+        return;
+    } else {
+        ssize_t ret;
+        iov = meaps_buffer_get_iovec(&conn->rbuffer);
+        ret = phr_decode_chunked(&client->req->res.chunked_decoder, iov.base, &iov.len);
+        fprintf(stderr, "%s:%d ret:%zd iov.len:%zu\n", __func__, __LINE__, ret, iov.len);
+        if (ret == -1) {
+            client->on_response_body(client, "chunked decoding failed");
+            return;
+        }
+        if (ret == -2) {
+            goto read_more;
+        }
+        meaps_buffer_consume(&conn->rbuffer, ret);
+        fprintf(stderr, "%.*s\n", (int)iov.len, iov.base);
+    }
+read_more:
+    meaps_conn_read(&client->conn, on_read_body);
+    return;
+}
+
+void meaps_http1client_read_response_body(meaps_http1client_t *client, meaps_http1client_cb on_response_body, int closed)
+{
+    client->on_response_body = on_response_body;
+    if (!meaps_buffer_empty(&client->conn.rbuffer))
+        on_read_body(&client->conn, closed ? meaps_err_connection_closed : NULL);
+    else
+        meaps_conn_read(&client->conn, on_read_body);
+}
+
+void meaps_http1client_close(meaps_http1client_t *client)
+{
+    meaps_conn_close(&client->conn);
+    free(client);
+}
 /***/
+
+int verbose = 1;
+
+void on_response_body(meaps_http1client_t *client, const char *err)
+{
+    if (err) {
+        fprintf(stderr, "Failed to read body: %s\n", err);
+    } else {
+        meaps_iovec_t body = meaps_buffer_get_iovec(&client->req->res.body);
+        fprintf(stdout, "%.*s", (int)body.len, body.base);
+    }
+    client->conn.loop->stop = 1;
+    meaps_http1client_close(client);
+}
 
 void on_response_head(meaps_http1client_t *client, const char *err)
 {
-    meaps_iovec_t iov;
-    if (err == NULL) {
-        iov = meaps_buffer_get_iovec(&client->conn.rbuffer);
-        fprintf(stderr, "got: %.*s\n", (int)iov.len, iov.base);
-    } else {
-        fprintf(stderr, "err: %s\n", err);
+    if (err != NULL && err != meaps_err_connection_closed) {
+        fprintf(stderr, "Error reading headers: %s\n", err);
+        return;
     }
+
+    if (verbose) {
+        fprintf(stderr, "HTTP/1.%d %d %.*s\n", client->req->res.minor_version, client->req->res.status, (int)client->req->res.msg.len, client->req->res.msg.base);
+        for (int i = 0; i < client->req->res.nr_headers; i++) {
+            struct phr_header *h = &client->req->res.headers[i];
+            fprintf(stderr, "%.*s: %.*s\n", (int)h->name_len, h->name, (int)h->value_len, h->value);
+        }
+    }
+
+    if (err == meaps_err_connection_closed && client->req->res.keep_alive == 0) {
+        client->conn.loop->stop = 1;
+        meaps_http1client_close(client);
+        return;
+    }
+
+    meaps_http1client_read_response_body(client, on_response_body, err == meaps_err_connection_closed);
 }
 
 void on_request_written(meaps_http1client_t *client, const char *err)
 {
-    meaps_http1client_read_response(client, on_response_head);
+    meaps_http1client_read_response_head(client, on_response_head);
 }
 
 void on_connect(meaps_http1client_t *client, const char *err)
@@ -517,7 +722,7 @@ int main(int argc, char **argv)
     const char *err = NULL;
     meaps_loop_t *loop = meaps_loop_create();
     meaps_request_t req;
-    meaps_http1client_t *h1client = meaps_http1client_create(loop);
+    meaps_http1client_t *client = meaps_http1client_create(loop);
     meaps_url_t url;
     char *to_parse = argv[1] ? argv[1] : "http://yay.im";
     meaps_url_parse(MEAPS_IOVEC_STR(to_parse), &url, &err);
@@ -527,9 +732,9 @@ int main(int argc, char **argv)
     }
     memset(&req, 0, sizeof(req));
     req.method = MEAPS_IOVEC_STRLIT("GET");
-    meaps_request_add_header(&req, MEAPS_IOVEC_STRLIT("host"), MEAPS_IOVEC_STRLIT("yay.im"));
-    h1client->req = &req;
-    meaps_http1client_connect(h1client, &url, on_connect);
+    meaps_request_add_header(&req, MEAPS_IOVEC_STRLIT("host"), url.raw.host);
+    client->req = &req;
+    meaps_http1client_connect(client, &url, on_connect);
 
     while (!loop->stop && meaps_loop_run(loop, 10) >= 0)
         ;
