@@ -394,7 +394,7 @@ typedef struct st_meaps_http1client_t {
     struct sockaddr_storage ss_dst;
     union {
         meaps_http1client_cb on_connect;
-        meaps_http1client_cb on_head;
+        meaps_http1client_cb request_sent;
     };
 } meaps_http1client_t;
 
@@ -417,10 +417,10 @@ void meaps_http1client_on_connect(meaps_conn_t *conn, const char *err)
     h1client->on_connect(h1client, err);
 }
 
-void meaps_http1client_on_head(meaps_conn_t *conn, const char *err)
+void meaps_http1client_request_sent(meaps_conn_t *conn, const char *err)
 {
     meaps_http1client_t *h1client = container_of(conn, meaps_http1client_t, conn);
-    h1client->on_head(h1client, err);
+    h1client->request_sent(h1client, err);
 }
 
 void meaps_http1client_connect(meaps_http1client_t *h1client, meaps_url_t *url, meaps_http1client_cb on_connect_cb)
@@ -435,10 +435,10 @@ void meaps_http1client_connect(meaps_http1client_t *h1client, meaps_url_t *url, 
 
 #define CRLF "\r\n"
 
-void meaps_http1client_write_request(meaps_http1client_t *client, meaps_request_t *req, meaps_http1client_cb on_head_cb)
+void meaps_http1client_write_request(meaps_http1client_t *client, meaps_request_t *req, meaps_http1client_cb on_request_sent_cb)
 {
     size_t i;
-    client->on_head = on_head_cb;
+    client->request_sent = on_request_sent_cb;
     meaps_buffer_write(&client->conn.wbuffer, req->method.base, req->method.len);
     meaps_buffer_write(&client->conn.wbuffer, " ", 1);
     if (req->url.raw.path.len == 0)
@@ -455,15 +455,37 @@ void meaps_http1client_write_request(meaps_http1client_t *client, meaps_request_
         meaps_buffer_write(&client->conn.wbuffer, req->headers[i].value.base, req->headers[i].value.len);
         meaps_buffer_write(&client->conn.wbuffer, CRLF, 2);
     }
-    meaps_conn_write(&client->conn, meaps_http1client_on_head);
+    meaps_buffer_write(&client->conn.wbuffer, CRLF, 2);
+    meaps_conn_write(&client->conn, meaps_http1client_request_sent);
+}
+
+void on_read_head(meaps_conn_t *conn, const char *err)
+{
+
+}
+void meaps_http1client_read_response(meaps_http1client_t *client, meaps_http1client_cb on_response_head)
+{
+    meaps_conn_read(&client->conn, on_read_head);
 }
 
 /***/
+
+void on_response_head(meaps_http1client_t *client, const char *err)
+{
+    meaps_iovec_t iov;
+    if (err != NULL) {
+        iov = meaps_buffer_get_iovec(&client->conn.rbuffer);
+        fprintf(stderr, "got: %.*s\n", (int)iov.len, iov.base);
+    } else {
+        fprintf(stderr, "err: %s\n", err);
+    }
+}
+
 void on_request_written(meaps_http1client_t *client, const char *err)
 {
-    fprintf(stderr, "%s:%d err:%s\n", __func__, __LINE__, err ?: "(null)");
-    client->loop->stop = 1;
+    meaps_http1client_read_response(client, on_response_head);
 }
+
 void on_connect(meaps_http1client_t *client, const char *err)
 {
     meaps_http1client_write_request(client, client->req, on_request_written);
