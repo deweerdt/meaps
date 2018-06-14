@@ -11,8 +11,9 @@
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
-#include <sys/socket.h>
 #include <sys/types.h>
+#include <netinet/tcp.h>
+
 
 #include "picohttpparser.h"
 
@@ -362,7 +363,7 @@ size_t sizeof_ss(struct sockaddr_storage *ss)
 
 void meaps_conn_connect(meaps_conn_t *conn, struct st_meaps_loop_t *loop, struct sockaddr_storage *ss, meaps_conn_cb cb)
 {
-    int s, ret;
+    int s, ret, one = 1;
 
     s = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (s < 0) {
@@ -373,6 +374,7 @@ void meaps_conn_connect(meaps_conn_t *conn, struct st_meaps_loop_t *loop, struct
     if (ret < 0 && errno != EINPROGRESS) {
         cb(conn, meaps_err_connection_error);
     }
+    setsockopt(s, SOL_TCP, TCP_NODELAY, &one, sizeof(one));
     conn->fd = s;
     conn->loop = loop;
     meaps_buffer_init(&conn->wbuffer);
