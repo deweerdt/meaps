@@ -135,7 +135,7 @@ no_scheme:
             url->raw.port.len = &to_parse.base[i] - url->raw.port.base;
             break;
         } else if (to_parse.base[i] == '/') {
-            url->raw.host.len = i;
+            url->raw.host.len = i - start_host;
             url->raw.path.base = &to_parse.base[i];
             url->raw.path.len = to_parse.len - i;
             break;
@@ -824,11 +824,23 @@ void on_response_head(meaps_http1client_t *client, const char *err)
 
 void on_request_written(meaps_http1client_t *client, const char *err)
 {
+    if (err != NULL) {
+        fprintf(stderr, "connection failed: %s, %s\n", err, strerror(errno));
+        client->conn.loop->stop = 1;
+        meaps_http1client_close(client);
+        return;
+    }
     meaps_http1client_read_response_head(client, on_response_head);
 }
 
 void on_connect(meaps_http1client_t *client, const char *err)
 {
+    if (err != NULL) {
+        fprintf(stderr, "connection failed: %s, %s\n", err, strerror(errno));
+        client->conn.loop->stop = 1;
+        meaps_http1client_close(client);
+        return;
+    }
     meaps_http1client_write_request(client, client->req, on_request_written);
 }
 
