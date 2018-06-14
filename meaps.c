@@ -750,10 +750,12 @@ void meaps_http1client_read_response_body(meaps_http1client_t *client, meaps_htt
 {
     client->on_response_body = on_response_body;
     client->conn.state = READ_BODY;
-    if (!meaps_buffer_empty(&client->conn.rbuffer))
+    if (!meaps_buffer_empty(&client->conn.rbuffer)) {
+        meaps_conn_add_event(&client->conn, client->conn.rbuffer.len);
         on_read_body(&client->conn, closed ? meaps_err_connection_closed : NULL);
-    else
+    } else {
         meaps_conn_read(&client->conn, on_read_body);
+    }
 }
 
 struct timespec ts_difftime(struct timespec start, struct timespec end)
