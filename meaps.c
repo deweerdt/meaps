@@ -203,7 +203,7 @@ void meaps_buffer_init(meaps_buffer_t *buf)
 void meaps_buffer_expand(meaps_buffer_t *buf, size_t len)
 {
     size_t new_cap = buf->cap ? buf->cap : 4096;
-    while (len > (new_cap - buf->len)) {
+    while (len + buf->len > new_cap) {
         new_cap *= 2;
     }
     buf->base = realloc(buf->base, new_cap);
@@ -229,9 +229,14 @@ int meaps_buffer_empty(meaps_buffer_t *buf)
     return buf->len == buf->idx;
 }
 
+void meaps_buffer_destroy(meaps_buffer_t *buf)
+{
+    free(buf->base);
+}
+
 meaps_iovec_t meaps_buffer_get_iovec(meaps_buffer_t *buf)
 {
-    return meaps_iovec_init(&buf->base[buf->idx], buf->len - buf->idx);
+    return meaps_iovec_init(buf->base + buf->idx, buf->len - buf->idx);
 }
 
 
@@ -386,6 +391,8 @@ void meaps_conn_close(meaps_conn_t *conn)
         e = next;
     }
     close(conn->fd);
+    meaps_buffer_destroy(&conn->wbuffer);
+    meaps_buffer_destroy(&conn->rbuffer);
     conn->fd = -1;
 }
 
@@ -451,8 +458,8 @@ int meaps_loop_run(meaps_loop_t *loop, int timeout)
         if (events[n].events & EPOLLIN) {
             ssize_t rret;
             while (1) {
-                meaps_buffer_expand(&conn->rbuffer, 8192);
-                while ((rret = read(conn->fd, conn->rbuffer.base + conn->rbuffer.len, conn->rbuffer.cap)) == -1 && errno == EINTR)
+                meaps_buffer_expand(&conn->rbuffer, 16834);
+                while ((rret = read(conn->fd, conn->rbuffer.base + conn->rbuffer.len, conn->rbuffer.cap - conn->rbuffer.len)) == -1 && errno == EINTR)
                         ;
                 if (rret < 0) {
                     if (errno != EAGAIN) {
@@ -702,17 +709,21 @@ void on_read_body(meaps_conn_t *conn, const char *err)
         return;
     } else {
         ssize_t ret;
+        size_t before_len;
         iov = meaps_buffer_get_iovec(&conn->rbuffer);
+        before_len = iov.len;
         ret = phr_decode_chunked(&client->req->res.chunked_decoder, iov.base, &iov.len);
-        fprintf(stderr, "%s:%d ret:%zd iov.len:%zu\n", __func__, __LINE__, ret, iov.len);
         if (ret == -1) {
             client->on_response_body(client, "chunked decoding failed");
             return;
         }
+        meaps_buffer_write(&client->req->res.body, iov.base, iov.len);
         if (ret == -2) {
+            meaps_buffer_consume(&conn->rbuffer, before_len);
             goto read_more;
         }
-        meaps_buffer_consume(&conn->rbuffer, ret);
+        client->on_response_body(client, NULL);
+        return;
     }
 read_more:
     meaps_conn_read(&client->conn, on_read_body);
@@ -763,7 +774,6 @@ void meaps_http1client_close(meaps_http1client_t *client)
         tdiff = ts_difftime(start, e->t);
         next = e->next;
         fprintf(stderr, "event: %s, at %ld\n", meaps_event_type(e->type), (tdiff.tv_sec * 1000) + tdiff.tv_nsec / 1000000);
-        free(e);
         e = next;
     }
     meaps_conn_close(&client->conn);
@@ -779,7 +789,9 @@ void on_response_body(meaps_http1client_t *client, const char *err)
         fprintf(stderr, "Failed to read body: %s\n", err);
     } else {
         meaps_iovec_t body = meaps_buffer_get_iovec(&client->req->res.body);
-        fprintf(stdout, "%.*s", (int)body.len, body.base);
+        if (0) {
+            fprintf(stderr, "%.*s\n", (int)body.len, body.base);
+        }
     }
     client->conn.loop->stop = 1;
     meaps_http1client_close(client);
