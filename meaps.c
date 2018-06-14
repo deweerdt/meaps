@@ -550,10 +550,10 @@ void meaps_http1client_request_sent(meaps_conn_t *conn, const char *err)
     client->on_request_sent(client, err);
 }
 
-void meaps_http1client_connect(meaps_http1client_t *client, meaps_url_t *url, meaps_http1client_cb on_connect_cb)
+void meaps_http1client_connect(meaps_http1client_t *client, meaps_http1client_cb on_connect_cb)
 {
     meaps_conn_add_event(&client->conn, START, 0);
-    if (!meaps_url_to_sockaddr(url, &client->ss_dst)) {
+    if (!meaps_url_to_sockaddr(&client->req->url, &client->ss_dst)) {
         on_connect_cb(client, meaps_err_invalid_url);
         return;
     }
@@ -756,25 +756,33 @@ struct timespec ts_difftime(struct timespec start, struct timespec end)
 
 void meaps_http1client_close(meaps_http1client_t *client)
 {
-    meaps_event_t *e, *next;
-    struct timespec start = {};
+    meaps_event_t *e;
+    int nr_events = 0, i = 0;
 
-    e = client->conn.events;
-    while (e) {
-        if (e->type == START) {
-            start = e->t;
-            assert(e->next == NULL);
+    if (client->conn.events != NULL) {
+        e = client->conn.events;
+        while (e) {
+            nr_events++;
+            e = e->next;
         }
-        e = e->next;
-    }
 
-    e = client->conn.events;
-    while (e) {
-        struct timespec tdiff;
-        tdiff = ts_difftime(start, e->t);
-        next = e->next;
-        fprintf(stderr, "event: %s, at %ld\n", meaps_event_type(e->type), (tdiff.tv_sec * 1000) + tdiff.tv_nsec / 1000000);
-        e = next;
+        meaps_event_t evts[nr_events];
+        e = client->conn.events;
+        i = 0;
+        while (e) {
+            evts[nr_events - i - 1] = *e;
+            e = e->next;
+            i++;
+        }
+
+        meaps_event_t prev = evts[0];
+        for (i = 1; i < nr_events; i++) {
+            struct timespec tdiff;
+            e = &evts[i];
+            tdiff = ts_difftime(prev.t, e->t);
+            prev = *e;
+            fprintf(stderr, "event: %s, at %ld\n", meaps_event_type(e->type), (tdiff.tv_sec * 1000) + tdiff.tv_nsec / 1000000);
+        }
     }
     meaps_conn_close(&client->conn);
     free(client);
@@ -850,18 +858,18 @@ int main(int argc, char **argv)
     meaps_loop_t *loop = meaps_loop_create();
     meaps_request_t req;
     meaps_http1client_t *client = meaps_http1client_create(loop);
-    meaps_url_t url;
     char *to_parse = argv[1] ? argv[1] : "http://yay.im";
-    meaps_url_parse(MEAPS_IOVEC_STR(to_parse), &url, &err);
+    memset(&req, 0, sizeof(req));
+
+    meaps_url_parse(MEAPS_IOVEC_STR(to_parse), &req.url, &err);
     if (err != NULL) {
         fprintf(stderr, "Failed to parse url: %s\n", to_parse);
         return 1;
     }
-    memset(&req, 0, sizeof(req));
     req.method = MEAPS_IOVEC_STRLIT("GET");
-    meaps_request_add_header(&req, MEAPS_IOVEC_STRLIT("host"), url.raw.host);
+    meaps_request_add_header(&req, MEAPS_IOVEC_STRLIT("host"), req.url.raw.host);
     client->req = &req;
-    meaps_http1client_connect(client, &url, on_connect);
+    meaps_http1client_connect(client, on_connect);
 
     while (!loop->stop && meaps_loop_run(loop, 10) >= 0)
         ;
