@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <assert.h>
 #include <openssl/ssl.h>
 #include <stdbool.h>
@@ -151,6 +152,14 @@ no_scheme:
     url->parsed.port = (uint16_t)uport;
     return;
 }
+void meaps_url_to_port(meaps_url_t *url, struct sockaddr_storage *ss)
+{
+    if (ss->ss_family == AF_INET) {
+        ((struct sockaddr_in *)ss)->sin_port = htons(url->parsed.port);
+    } else {
+        ((struct sockaddr_in6 *)ss)->sin6_port = htons(url->parsed.port);
+    }
+}
 
 int meaps_url_to_sockaddr(meaps_url_t *url, struct sockaddr_storage *ss)
 {
@@ -174,11 +183,6 @@ int meaps_url_to_sockaddr(meaps_url_t *url, struct sockaddr_storage *ss)
         if (rp->ai_family == AF_INET || rp->ai_family == AF_INET6) {
             ret = 1;
             memcpy(ss, rp->ai_addr, rp->ai_addrlen);
-            if (rp->ai_family == AF_INET) {
-                ((struct sockaddr_in *)ss)->sin_port = htons(url->parsed.port);
-            } else {
-                ((struct sockaddr_in6 *)ss)->sin6_port = htons(url->parsed.port);
-            }
             break;
         }
     }
@@ -466,9 +470,9 @@ int meaps_loop_run(meaps_loop_t *loop, int timeout)
                     meaps_conn_add_event(conn, 0);
                     break;
                 }
-                meaps_conn_add_event(conn, rret);
                 conn->rbuffer.len += rret;
             }
+            meaps_conn_add_event(conn, rret);
             if (rret == 0) {
                 conn->cb(conn, meaps_err_connection_closed);
             } else {
@@ -545,16 +549,23 @@ void meaps_http1client_request_sent(meaps_conn_t *conn, const char *err)
     client->on_request_sent(client, err);
 }
 
-void meaps_http1client_connect(meaps_http1client_t *client, meaps_http1client_cb on_connect_cb)
+void meaps_http1client_connect(meaps_http1client_t *client, meaps_http1client_cb on_connect_cb, struct sockaddr_storage *ss_override)
 {
     client->conn.state = START;
-    meaps_conn_add_event(&client->conn, 0);
-    client->conn.state = DNS;
-    if (!meaps_url_to_sockaddr(&client->req->url, &client->ss_dst)) {
-        on_connect_cb(client, meaps_err_invalid_url);
-        return;
+
+    /* dns resolution */
+    if (ss_override == NULL) {
+        meaps_conn_add_event(&client->conn, 0);
+        client->conn.state = DNS;
+        if (!meaps_url_to_sockaddr(&client->req->url, &client->ss_dst)) {
+            on_connect_cb(client, meaps_err_invalid_url);
+            return;
+        }
+        meaps_conn_add_event(&client->conn, 0);
+    } else {
+        client->ss_dst = *ss_override;
     }
-    meaps_conn_add_event(&client->conn, 0);
+    meaps_url_to_port(&client->req->url, &client->ss_dst);
     client->on_connect = on_connect_cb;
     client->conn.state = CONNECT;
     meaps_conn_connect(&client->conn, client->loop, &client->ss_dst, meaps_http1client_on_connect);
@@ -852,24 +863,70 @@ void on_connect(meaps_http1client_t *client, const char *err)
     meaps_http1client_write_request(client, client->req, on_request_written);
 }
 
+void usage(const char *progname)
+{
+    fprintf(stderr, "usage: %s [--force-ip <ip>] url\n", progname);
+}
+
 int main(int argc, char **argv)
 {
     const char *err = NULL;
     meaps_loop_t *loop = meaps_loop_create();
     meaps_request_t req;
     meaps_http1client_t *client = meaps_http1client_create(loop);
-    char *to_parse = argv[1] ? argv[1] : "http://yay.im";
-    memset(&req, 0, sizeof(req));
+    char *progname = *argv;
+    char *url_arg = NULL;
+    struct sockaddr_storage ss, *ss_override = NULL; 
 
-    meaps_url_parse(MEAPS_IOVEC_STR(to_parse), &req.url, &err);
+    argv++;
+    if (*argv == NULL)
+        goto usage;
+
+    while (*argv) {
+        if (!strcmp("--force-ip", *argv)) {
+            unsigned char buf[sizeof(struct in6_addr)];
+            memset(&ss, 0, sizeof(ss));
+            argv++;
+            if (*argv == NULL) {
+                fprintf(stderr, "Missing argument for `--force-ip`\n");
+                goto usage;
+            }
+            if (inet_pton(AF_INET, *argv, buf)) {
+                struct sockaddr_in *sin = (struct sockaddr_in *)&ss;
+                sin->sin_family = AF_INET;
+                memcpy(&sin->sin_addr, buf, sizeof(sin->sin_addr));
+            } else if (inet_pton(AF_INET6, *argv, buf)) {
+                struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&ss;
+                sin6->sin6_family = AF_INET6;
+                memcpy(&sin6->sin6_addr, buf, sizeof(sin6->sin6_addr));
+            } else {
+                fprintf(stderr, "Invalid IP address for `--force-ip`: %s\n", *argv);
+                return 1;
+            }
+            ss_override = &ss;
+            argv++;
+        } else {
+            url_arg = *argv++;
+            if (*argv != NULL) {
+                goto usage;
+            }
+            break;
+        }
+    }
+    if (!url_arg) {
+        goto usage;
+    }
+
+    memset(&req, 0, sizeof(req));
+    meaps_url_parse(MEAPS_IOVEC_STR(url_arg), &req.url, &err);
     if (err != NULL) {
-        fprintf(stderr, "Failed to parse url: %s\n", to_parse);
+        fprintf(stderr, "Failed to parse url: %s\n", url_arg);
         return 1;
     }
     req.method = MEAPS_IOVEC_STRLIT("GET");
     meaps_request_add_header(&req, MEAPS_IOVEC_STRLIT("host"), req.url.raw.host);
     client->req = &req;
-    meaps_http1client_connect(client, on_connect);
+    meaps_http1client_connect(client, on_connect, ss_override);
 
     while (meaps_loop_run(loop, 10) >= 0) {
         if (client->done)
@@ -877,4 +934,7 @@ int main(int argc, char **argv)
     }
     free(client);
     return 0;
+usage:
+    usage(progname);
+    return 1;
 }
