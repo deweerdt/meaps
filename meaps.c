@@ -516,6 +516,7 @@ typedef struct st_meaps_http1client_t {
         meaps_http1client_cb on_response_head;
         meaps_http1client_cb on_response_body;
     };
+    int done;
 } meaps_http1client_t;
 
 meaps_http1client_t *meaps_http1client_create(meaps_loop_t *loop)
@@ -786,7 +787,7 @@ void meaps_http1client_close(meaps_http1client_t *client)
         }
     }
     meaps_conn_close(&client->conn);
-    free(client);
+    client->done = 1;
 }
 /***/
 
@@ -845,7 +846,6 @@ void on_connect(meaps_http1client_t *client, const char *err)
 {
     if (err != NULL) {
         fprintf(stderr, "connection failed: %s, %s\n", err, strerror(errno));
-        client->conn.loop->stop = 1;
         meaps_http1client_close(client);
         return;
     }
@@ -871,7 +871,10 @@ int main(int argc, char **argv)
     client->req = &req;
     meaps_http1client_connect(client, on_connect);
 
-    while (!loop->stop && meaps_loop_run(loop, 10) >= 0)
-        ;
+    while (meaps_loop_run(loop, 10) >= 0) {
+        if (client->done)
+            break;
+    }
+    free(client);
     return 0;
 }
