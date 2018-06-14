@@ -455,7 +455,7 @@ int meaps_loop_run(meaps_loop_t *loop, int timeout)
             continue;
         }
         if (events[n].events & EPOLLIN) {
-            ssize_t rret;
+            ssize_t rret, total_read = 0;
             while (1) {
                 meaps_buffer_expand(&conn->rbuffer, 16834);
                 while ((rret = read(conn->fd, conn->rbuffer.base + conn->rbuffer.len, conn->rbuffer.cap - conn->rbuffer.len)) == -1 && errno == EINTR)
@@ -471,8 +471,9 @@ int meaps_loop_run(meaps_loop_t *loop, int timeout)
                     break;
                 }
                 conn->rbuffer.len += rret;
+                total_read += rret;
             }
-            meaps_conn_add_event(conn, rret);
+            meaps_conn_add_event(conn, total_read);
             if (rret == 0) {
                 conn->cb(conn, meaps_err_connection_closed);
             } else {
@@ -480,7 +481,7 @@ int meaps_loop_run(meaps_loop_t *loop, int timeout)
             }
         }
         if (events[n].events & EPOLLOUT) {
-            ssize_t wret;
+            ssize_t wret, total_written = 0;;
             meaps_iovec_t iov;
 
             while (!meaps_buffer_empty(&conn->wbuffer)) {
@@ -495,9 +496,10 @@ int meaps_loop_run(meaps_loop_t *loop, int timeout)
                     meaps_loop_wait_write(conn->loop, conn);
                     continue;
                 }
-                meaps_conn_add_event(conn, wret);
+                total_written += wret;
                 meaps_buffer_consume(&conn->wbuffer, wret);
             }
+            meaps_conn_add_event(conn, total_written);
             assert(meaps_buffer_empty(&conn->wbuffer));
             conn->cb(conn, NULL);
         }
@@ -794,7 +796,7 @@ void meaps_http1client_close(meaps_http1client_t *client)
             e = &evts[i];
             tdiff = ts_difftime(prev.t, e->t);
             prev = *e;
-            fprintf(stderr, "event: %s, at %ld\n", meaps_event_type(e->type), (tdiff.tv_sec * 1000) + tdiff.tv_nsec / 1000000);
+            fprintf(stderr, "event: %s, at %ld, bytes:%zu\n", meaps_event_type(e->type), (tdiff.tv_sec * 1000) + tdiff.tv_nsec / 1000000, e->len);
         }
     }
     meaps_conn_close(&client->conn);
