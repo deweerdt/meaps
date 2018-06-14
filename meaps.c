@@ -269,6 +269,7 @@ void meaps_request_add_header(meaps_request_t *req, meaps_iovec_t name, meaps_io
 typedef void (*meaps_conn_cb)(struct st_meaps_conn_t *, const char *);
 typedef void (*meaps_conn_io_cb)(struct st_meaps_conn_t *, meaps_conn_cb);
 struct st_meaps_loop_t;
+struct st_meaps_event_t;
 typedef struct st_meaps_conn_t {
     int fd;
     SSL *ssl;
@@ -276,7 +277,59 @@ typedef struct st_meaps_conn_t {
     struct st_meaps_loop_t *loop;
     meaps_buffer_t wbuffer;
     meaps_buffer_t rbuffer;
+    struct st_meaps_event_t *events;
 } meaps_conn_t;
+
+typedef enum {
+    START,
+    DNS,
+    CONNECT,
+    READ,
+    WRITE,
+    CLOSE,
+    FIRST_BYTE_HEAD,
+    FIRST_BYTE_BODY,
+    LAST_BYTE_HEAD,
+    LAST_BYTE_BODY,
+    REQUEST_SENT,
+} meaps_event_type_t;
+
+typedef struct st_meaps_event_t {
+    meaps_event_type_t type;
+    struct timespec t;
+    size_t len;
+    struct st_meaps_event_t *next;
+} meaps_event_t;
+
+const char *meaps_event_type(meaps_event_type_t type)
+{
+    const char *etxt[] = {
+        [START] = "START",
+        [DNS] = "DNS",
+        [CONNECT] = "CONNECT",
+        [READ] = "READ",
+        [WRITE] = "WRITE",
+        [CLOSE] = "CLOSE",
+        [FIRST_BYTE_HEAD] = "FIRST_BYTE_HEAD",
+        [FIRST_BYTE_BODY] = "FIRST_BYTE_BODY",
+        [LAST_BYTE_HEAD] = "LAST_BYTE_HEAD",
+        [LAST_BYTE_BODY] = "LAST_BYTE_BODY",
+        [REQUEST_SENT] = "REQUEST_SENT",
+    };
+    if (type >= ARRAY_SIZE(etxt))
+        return "unknown event type";
+    return etxt[type];
+}
+void meaps_conn_add_event(meaps_conn_t *conn, meaps_event_type_t type, size_t len)
+{
+    meaps_event_t *e = malloc(sizeof(*e));
+    e->type = type;
+    clock_gettime(CLOCK_MONOTONIC, &e->t);
+    e->len = len;
+    e->next = conn->events;
+    conn->events = e;
+    return;
+}
 
 const char *meaps_err_connection_error = "connection error";
 const char *meaps_err_invalid_url = "invalid url";
@@ -325,6 +378,13 @@ void meaps_conn_connect(meaps_conn_t *conn, struct st_meaps_loop_t *loop, struct
 
 void meaps_conn_close(meaps_conn_t *conn)
 {
+    meaps_event_t *e, *next;
+    e = conn->events;
+    while (e) {
+        next = e->next;
+        free(e);
+        e = next;
+    }
     close(conn->fd);
     conn->fd = -1;
 }
@@ -391,7 +451,7 @@ int meaps_loop_run(meaps_loop_t *loop, int timeout)
         if (events[n].events & EPOLLIN) {
             ssize_t rret;
             while (1) {
-                meaps_buffer_expand(&conn->rbuffer, 4096);
+                meaps_buffer_expand(&conn->rbuffer, 8192);
                 while ((rret = read(conn->fd, conn->rbuffer.base + conn->rbuffer.len, conn->rbuffer.cap)) == -1 && errno == EINTR)
                         ;
                 if (rret < 0) {
@@ -401,8 +461,10 @@ int meaps_loop_run(meaps_loop_t *loop, int timeout)
                     }
                     break;
                 } else if (rret == 0) {
+                    meaps_conn_add_event(conn, CLOSE, 0);
                     break;
                 }
+                meaps_conn_add_event(conn, READ, rret);
                 conn->rbuffer.len += rret;
             }
             if (rret == 0) {
@@ -427,6 +489,7 @@ int meaps_loop_run(meaps_loop_t *loop, int timeout)
                     meaps_loop_wait_write(conn->loop, conn);
                     continue;
                 }
+                meaps_conn_add_event(conn, WRITE, wret);
                 meaps_buffer_consume(&conn->wbuffer, wret);
             }
             assert(meaps_buffer_empty(&conn->wbuffer));
@@ -469,21 +532,25 @@ meaps_http1client_t *meaps_http1client_create(meaps_loop_t *loop)
 void meaps_http1client_on_connect(meaps_conn_t *conn, const char *err)
 {
     meaps_http1client_t *client = container_of(conn, meaps_http1client_t, conn);
+    meaps_conn_add_event(&client->conn, CONNECT, 0);
     client->on_connect(client, err);
 }
 
 void meaps_http1client_request_sent(meaps_conn_t *conn, const char *err)
 {
     meaps_http1client_t *client = container_of(conn, meaps_http1client_t, conn);
+    meaps_conn_add_event(conn, REQUEST_SENT, 0);
     client->on_request_sent(client, err);
 }
 
 void meaps_http1client_connect(meaps_http1client_t *client, meaps_url_t *url, meaps_http1client_cb on_connect_cb)
 {
+    meaps_conn_add_event(&client->conn, START, 0);
     if (!meaps_url_to_sockaddr(url, &client->ss_dst)) {
         on_connect_cb(client, meaps_err_invalid_url);
         return;
     }
+    meaps_conn_add_event(&client->conn, DNS, 0);
     client->on_connect = on_connect_cb;
     meaps_conn_connect(&client->conn, client->loop, &client->ss_dst, meaps_http1client_on_connect);
 }
@@ -589,7 +656,7 @@ void on_read_head(meaps_conn_t *conn, const char *err)
                 memset(&req->res.chunked_decoder, 0, sizeof(req->res.chunked_decoder));
             }
         } else if (!strncasecmp(req->res.headers[i].name, "connection", req->res.headers[i].name_len)) {
-            if (strncasecmp(req->res.headers[i].value, "close", req->res.headers[i].value_len)) {
+            if (!strncasecmp(req->res.headers[i].value, "close", req->res.headers[i].value_len)) {
                 req->res.keep_alive = 0;
             }
         }
@@ -646,7 +713,6 @@ void on_read_body(meaps_conn_t *conn, const char *err)
             goto read_more;
         }
         meaps_buffer_consume(&conn->rbuffer, ret);
-        fprintf(stderr, "%.*s\n", (int)iov.len, iov.base);
     }
 read_more:
     meaps_conn_read(&client->conn, on_read_body);
@@ -662,8 +728,44 @@ void meaps_http1client_read_response_body(meaps_http1client_t *client, meaps_htt
         meaps_conn_read(&client->conn, on_read_body);
 }
 
+struct timespec ts_difftime(struct timespec start, struct timespec end)
+{
+    struct timespec ret;
+
+    if ((end.tv_nsec - start.tv_nsec) < 0) {
+        ret.tv_sec = end.tv_sec - start.tv_sec - 1;
+        ret.tv_nsec = end.tv_nsec - start.tv_nsec + 1000000000;
+    } else {
+        ret.tv_sec = end.tv_sec - start.tv_sec;
+        ret.tv_nsec = end.tv_nsec - start.tv_nsec;
+    }
+
+    return ret;
+}
+
 void meaps_http1client_close(meaps_http1client_t *client)
 {
+    meaps_event_t *e, *next;
+    struct timespec start = {};
+
+    e = client->conn.events;
+    while (e) {
+        if (e->type == START) {
+            start = e->t;
+            assert(e->next == NULL);
+        }
+        e = e->next;
+    }
+
+    e = client->conn.events;
+    while (e) {
+        struct timespec tdiff;
+        tdiff = ts_difftime(start, e->t);
+        next = e->next;
+        fprintf(stderr, "event: %s, at %ld\n", meaps_event_type(e->type), (tdiff.tv_sec * 1000) + tdiff.tv_nsec / 1000000);
+        free(e);
+        e = next;
+    }
     meaps_conn_close(&client->conn);
     free(client);
 }
@@ -685,6 +787,7 @@ void on_response_body(meaps_http1client_t *client, const char *err)
 
 void on_response_head(meaps_http1client_t *client, const char *err)
 {
+    meaps_conn_add_event(&client->conn, LAST_BYTE_HEAD, 0);
     if (err != NULL && err != meaps_err_connection_closed) {
         fprintf(stderr, "Error reading headers: %s\n", err);
         return;
