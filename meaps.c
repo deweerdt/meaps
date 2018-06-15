@@ -274,6 +274,11 @@ void meaps_request_add_header(meaps_request_t *req, meaps_iovec_t name, meaps_io
     return;
 }
 
+void meaps_request_dispose(meaps_request_t *req)
+{
+    meaps_buffer_destroy(&req->res.body);
+}
+
 /***/
 
 typedef enum {
@@ -418,6 +423,13 @@ meaps_loop_t *meaps_loop_create(void)
     return loop;
 
 }
+
+void meaps_loop_destroy(meaps_loop_t *loop)
+{
+    close(loop->epoll_fd);
+    free(loop);
+}
+
 void meaps_loop_wait_write(meaps_loop_t *loop, struct st_meaps_conn_t *conn)
 {
     int ret;
@@ -938,6 +950,8 @@ int main(int argc, char **argv)
         if (client->done)
             break;
     }
+    meaps_loop_destroy(loop);
+    meaps_request_dispose(&req);
     free(client);
     return 0;
 usage:
