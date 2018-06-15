@@ -555,7 +555,6 @@ meaps_http1client_t *meaps_http1client_create(meaps_loop_t *loop)
 void meaps_http1client_on_connect(meaps_conn_t *conn, const char *err)
 {
     meaps_http1client_t *client = container_of(conn, meaps_http1client_t, conn);
-    meaps_conn_add_event(&client->conn, 0);
     client->on_connect(client, err);
 }
 
@@ -851,7 +850,8 @@ void on_response_head(meaps_http1client_t *client, const char *err)
         }
     }
 
-    if (err == meaps_err_connection_closed && client->req->res.keep_alive == 0) {
+    if ((err == meaps_err_connection_closed && client->req->res.keep_alive == 0)
+        || client->req->res.content_length == 0) {
         client->conn.loop->stop = 1;
         meaps_http1client_close(client);
         return;
