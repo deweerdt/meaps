@@ -586,6 +586,8 @@ void meaps_http1client_connect(meaps_http1client_t *client, meaps_http1client_cb
     meaps_conn_connect(&client->conn, client->loop, &client->ss_dst, meaps_http1client_on_connect);
 }
 
+int verbose = 1;
+
 #define CRLF "\r\n"
 
 void meaps_http1client_write_request(meaps_http1client_t *client, meaps_request_t *req, meaps_http1client_cb on_request_sent_cb)
@@ -602,12 +604,19 @@ void meaps_http1client_write_request(meaps_http1client_t *client, meaps_request_
     meaps_buffer_write(&client->conn.wbuffer, " ", 1);
     meaps_buffer_write(&client->conn.wbuffer, "HTTP/1.1", 8);
     meaps_buffer_write(&client->conn.wbuffer, CRLF, 2);
+    if (verbose) {
+        meaps_iovec_t iov = meaps_buffer_get_iovec(&client->conn.wbuffer);
+        fprintf(stderr, "> %.*s", (int)iov.len, iov.base);
+    }
 
     for (i = 0; i < req->nr_headers; i++) {
         meaps_buffer_write(&client->conn.wbuffer, req->headers[i].name.base, req->headers[i].name.len);
         meaps_buffer_write(&client->conn.wbuffer, ": ", 2);
         meaps_buffer_write(&client->conn.wbuffer, req->headers[i].value.base, req->headers[i].value.len);
         meaps_buffer_write(&client->conn.wbuffer, CRLF, 2);
+        if (verbose) {
+            fprintf(stderr, "> %.*s: %.*s\n", (int)req->headers[i].name.len, req->headers[i].name.base, (int)req->headers[i].value.len, req->headers[i].value.base);
+        }
     }
     meaps_buffer_write(&client->conn.wbuffer, CRLF, 2);
     client->conn.state = WRITE_HEAD;
@@ -819,8 +828,6 @@ void meaps_http1client_close(meaps_http1client_t *client)
 }
 /***/
 
-int verbose = 1;
-
 void on_response_body(meaps_http1client_t *client, const char *err)
 {
     if (err) {
@@ -843,10 +850,10 @@ void on_response_head(meaps_http1client_t *client, const char *err)
     }
 
     if (verbose) {
-        fprintf(stderr, "HTTP/1.%d %d %.*s\n", client->req->res.minor_version, client->req->res.status, (int)client->req->res.msg.len, client->req->res.msg.base);
+        fprintf(stderr, "< HTTP/1.%d %d %.*s\n", client->req->res.minor_version, client->req->res.status, (int)client->req->res.msg.len, client->req->res.msg.base);
         for (int i = 0; i < client->req->res.nr_headers; i++) {
             struct phr_header *h = &client->req->res.headers[i];
-            fprintf(stderr, "%.*s: %.*s\n", (int)h->name_len, h->name, (int)h->value_len, h->value);
+            fprintf(stderr, "< %.*s: %.*s\n", (int)h->name_len, h->name, (int)h->value_len, h->value);
         }
     }
 
