@@ -276,6 +276,7 @@ void meaps_request_add_header(meaps_request_t *req, meaps_iovec_t name, meaps_io
 
 void meaps_request_dispose(meaps_request_t *req)
 {
+    free(req->headers);
     meaps_buffer_destroy(&req->res.body);
 }
 
@@ -902,6 +903,8 @@ int main(int argc, char **argv)
     char *progname = *argv;
     char *url_arg = NULL;
     struct sockaddr_storage ss, *ss_override = NULL; 
+    meaps_header_t *to_add = NULL;
+    int i, nr_to_add = 0;
 
     argv++;
     if (*argv == NULL)
@@ -930,6 +933,25 @@ int main(int argc, char **argv)
             }
             ss_override = &ss;
             argv++;
+        } else if (!strcmp("--header", *argv)) {
+            argv++;
+            if (*argv == NULL) {
+                fprintf(stderr, "Missing argument for `--header`\n");
+                goto usage;
+            }
+
+            char *colon = strchr(*argv, ':');
+            if (colon == NULL) {
+                fprintf(stderr, "A header must contain a value separated by a colon `:`\n");
+                goto usage;
+            }
+            *colon = '\0';
+            to_add = realloc(to_add, sizeof(*to_add) * (nr_to_add + 1));
+            meaps_header_t *h = &to_add[nr_to_add];
+            h->name = meaps_iovec_init(*argv, strlen(*argv));
+            h->value = meaps_iovec_init(colon+1, strlen(colon+1));
+            nr_to_add++;
+            argv++;
         } else {
             url_arg = *argv++;
             if (*argv != NULL) {
@@ -950,6 +972,10 @@ int main(int argc, char **argv)
     }
     req.method = MEAPS_IOVEC_STRLIT("GET");
     meaps_request_add_header(&req, MEAPS_IOVEC_STRLIT("host"), req.url.raw.host);
+    for (i = 0; i < nr_to_add; i++) {
+        meaps_request_add_header(&req, to_add[i].name, to_add[i].value);
+    }
+    free(to_add);
     client->req = &req;
     meaps_http1client_connect(client, on_connect, ss_override);
 
