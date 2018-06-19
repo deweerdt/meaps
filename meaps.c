@@ -16,6 +16,8 @@
 
 #include "picohttpparser.h"
 
+#include "meaps.h"
+
 struct st_meaps_conn_t;
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
@@ -189,13 +191,6 @@ int meaps_url_to_sockaddr(meaps_url_t *url, struct sockaddr_storage *ss)
 
 /***/
 
-typedef struct st_meaps_buffer_t {
-    char *base;
-    size_t idx;
-    size_t len;
-    size_t cap;
-} meaps_buffer_t;
-
 void meaps_buffer_init(meaps_buffer_t *buf)
 {
     memset(buf, 0, sizeof(*buf));
@@ -276,39 +271,6 @@ void meaps_request_dispose(meaps_request_t *req)
 }
 
 /***/
-
-typedef enum {
-    START,
-    DNS,
-    CONNECT,
-    READ_HEAD,
-    READ_BODY,
-    WRITE_HEAD,
-    WRITE_BODY,
-    CLOSE,
-} meaps_event_type_t;
-
-typedef void (*meaps_conn_cb)(struct st_meaps_conn_t *, const char *);
-typedef void (*meaps_conn_io_cb)(struct st_meaps_conn_t *, meaps_conn_cb);
-struct st_meaps_loop_t;
-struct st_meaps_event_t;
-typedef struct st_meaps_conn_t {
-    int fd;
-    SSL *ssl;
-    meaps_conn_cb cb;
-    struct st_meaps_loop_t *loop;
-    meaps_buffer_t wbuffer;
-    meaps_buffer_t rbuffer;
-    struct st_meaps_event_t *events;
-    meaps_event_type_t state;
-} meaps_conn_t;
-
-typedef struct st_meaps_event_t {
-    meaps_event_type_t type;
-    struct timespec t;
-    size_t len;
-    struct st_meaps_event_t *next;
-} meaps_event_t;
 
 const char *meaps_event_type(meaps_event_type_t type)
 {

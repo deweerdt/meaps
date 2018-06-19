@@ -1,4 +1,49 @@
-static void setup_bio(h2o_socket_t *sock)
+#include <unistd.h>
+#include <string.h>
+#include <openssl/bio.h>
+#include <openssl/ssl.h>
+
+#include "meaps.h"
+
+static int read_bio(BIO *b, char *out, int len)
+{
+    meaps_conn_t *conn = BIO_get_data(b);
+
+    if (len == 0)
+        return 0;
+
+    return read(conn->fd, out, len);
+}
+
+static int write_bio(BIO *b, const char *in, int len)
+{
+    meaps_conn_t *conn = BIO_get_data(b);
+
+    /* FIXME no support for SSL renegotiation (yet) */
+    return write(conn->fd, in, len);
+}
+
+static int puts_bio(BIO *b, const char *str)
+{
+    return write_bio(b, str, (int)strlen(str));
+}
+
+static long ctrl_bio(BIO *b, int cmd, long num, void *ptr)
+{
+    switch (cmd) {
+        case BIO_CTRL_GET_CLOSE:
+            return BIO_get_shutdown(b);
+        case BIO_CTRL_SET_CLOSE:
+            BIO_set_shutdown(b, (int)num);
+            return 1;
+        case BIO_CTRL_FLUSH:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static void setup_bio(meaps_conn_t *conn)
 {
     static BIO_METHOD *bio_methods = NULL;
     if (bio_methods == NULL) {
@@ -18,8 +63,13 @@ static void setup_bio(h2o_socket_t *sock)
 
     BIO *bio = BIO_new(bio_methods);
     if (bio == NULL)
-        h2o_fatal("no memory");
-    BIO_set_data(bio, sock);
+        meaps_fatal("no memory");
+    BIO_set_data(bio, conn);
     BIO_set_init(bio, 1);
-    SSL_set_bio(sock->ssl->ossl, bio, bio);
+    SSL_set_bio(conn->ssl, bio, bio);
+}
+
+void meaps_conn_ssl_init(meaps_conn_t *conn)
+{
+    setup_bio(conn);
 }

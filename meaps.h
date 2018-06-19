@@ -1,0 +1,54 @@
+#ifndef MEAPS_H_
+#define MEAPS_H_
+
+#include <stdlib.h>
+#include <openssl/ssl.h>
+
+static inline void meaps_fatal(const char *msg)
+{
+    fprintf(stderr, "%s\n", msg);
+    abort();
+}
+
+struct st_meaps_loop_t;
+struct st_meaps_event_t;
+struct st_meaps_conn_t;
+
+typedef enum {
+    START,
+    DNS,
+    CONNECT,
+    READ_HEAD,
+    READ_BODY,
+    WRITE_HEAD,
+    WRITE_BODY,
+    CLOSE,
+} meaps_event_type_t;
+
+typedef struct st_meaps_buffer_t {
+    char *base;
+    size_t idx;
+    size_t len;
+    size_t cap;
+} meaps_buffer_t;
+
+typedef void (*meaps_conn_cb)(struct st_meaps_conn_t *, const char *);
+typedef struct st_meaps_conn_t {
+    int fd;
+    SSL *ssl;
+    meaps_conn_cb cb;
+    struct st_meaps_loop_t *loop;
+    meaps_buffer_t wbuffer;
+    meaps_buffer_t rbuffer;
+    struct st_meaps_event_t *events;
+    meaps_event_type_t state;
+} meaps_conn_t;
+
+typedef struct st_meaps_event_t {
+    meaps_event_type_t type;
+    struct timespec t;
+    size_t len;
+    struct st_meaps_event_t *next;
+} meaps_event_t;
+
+#endif /* MEAPS_H_ */
