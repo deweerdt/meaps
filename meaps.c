@@ -14,12 +14,11 @@
 #include <sys/types.h>
 #include <netinet/tcp.h>
 
-
 #include "picohttpparser.h"
 
 struct st_meaps_conn_t;
 
-#define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
+#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 typedef struct st_meaps_iovec_t {
     char *base;
     size_t len;
@@ -30,12 +29,12 @@ typedef struct st_meaps_iovec_t {
 
 meaps_iovec_t meaps_iovec_init(char *base, size_t len)
 {
-    return (meaps_iovec_t){ base, len };
+    return (meaps_iovec_t){base, len};
 }
 
 meaps_iovec_t meaps_iovec_dup(char *base, size_t len)
 {
-    meaps_iovec_t iov = { malloc(len), len};
+    meaps_iovec_t iov = {malloc(len), len};
     memcpy(iov.base, base, len);
     return iov;
 }
@@ -49,10 +48,7 @@ typedef struct st_meaps_header_t {
 
 /***/
 
-enum meaps_url_scheme_t {
-    HTTP,
-    HTTPS
-};
+enum meaps_url_scheme_t { HTTP, HTTPS };
 typedef struct st_meaps_url_t {
     struct {
         meaps_iovec_t scheme;
@@ -244,7 +240,6 @@ meaps_iovec_t meaps_buffer_get_iovec(meaps_buffer_t *buf)
     return meaps_iovec_init(buf->base + buf->idx, buf->len - buf->idx);
 }
 
-
 /***/
 
 typedef struct st_meaps_request_t {
@@ -276,6 +271,7 @@ void meaps_request_add_header(meaps_request_t *req, meaps_iovec_t name, meaps_io
 
 void meaps_request_dispose(meaps_request_t *req)
 {
+    free(req->headers);
     meaps_buffer_destroy(&req->res.body);
 }
 
@@ -317,14 +313,10 @@ typedef struct st_meaps_event_t {
 const char *meaps_event_type(meaps_event_type_t type)
 {
     const char *etxt[] = {
-        [START] = "START",
-        [DNS] = "DNS",
-        [CONNECT] = "CONNECT",
-        [READ_HEAD] = "READ_HEAD",
-        [READ_BODY] = "READ_BODY",
-        [WRITE_HEAD] = "WRITE_HEAD",
-        [WRITE_BODY] = "WRITE_BODY",
-        [CLOSE] = "CLOSE",
+        [START] = "START",           [DNS] = "DNS",
+        [CONNECT] = "CONNECT",       [READ_HEAD] = "READ_HEAD",
+        [READ_BODY] = "READ_BODY",   [WRITE_HEAD] = "WRITE_HEAD",
+        [WRITE_BODY] = "WRITE_BODY", [CLOSE] = "CLOSE",
     };
     if (type >= ARRAY_SIZE(etxt))
         return "unknown event type";
@@ -357,12 +349,12 @@ void meaps_conn_wait_write(meaps_conn_t *conn, meaps_conn_cb cb)
 size_t sizeof_ss(struct sockaddr_storage *ss)
 {
     switch (ss->ss_family) {
-        case AF_INET:
-            return sizeof(struct sockaddr_in);
-        case AF_INET6:
-            return sizeof(struct sockaddr_in6);
-        default:
-            abort();
+    case AF_INET:
+        return sizeof(struct sockaddr_in);
+    case AF_INET6:
+        return sizeof(struct sockaddr_in6);
+    default:
+        abort();
     }
 }
 
@@ -409,7 +401,6 @@ typedef struct st_meaps_loop_t {
     int stop;
 } meaps_loop_t;
 
-
 meaps_loop_t *meaps_loop_create(void)
 {
     meaps_loop_t *loop;
@@ -421,7 +412,6 @@ meaps_loop_t *meaps_loop_create(void)
     loop->epoll_fd = efd;
     loop->stop = 0;
     return loop;
-
 }
 
 void meaps_loop_destroy(meaps_loop_t *loop)
@@ -433,7 +423,7 @@ void meaps_loop_destroy(meaps_loop_t *loop)
 void meaps_loop_wait_write(meaps_loop_t *loop, struct st_meaps_conn_t *conn)
 {
     int ret;
-    struct epoll_event e = { .events = EPOLLOUT, .data.ptr = conn };
+    struct epoll_event e = {.events = EPOLLOUT, .data.ptr = conn};
     ret = epoll_ctl(loop->epoll_fd, EPOLL_CTL_ADD, conn->fd, &e);
     assert(ret == 0 && "epoll_ctl failed");
 }
@@ -441,7 +431,7 @@ void meaps_loop_wait_write(meaps_loop_t *loop, struct st_meaps_conn_t *conn)
 void meaps_conn_read(meaps_conn_t *conn, meaps_conn_cb cb)
 {
     int ret;
-    struct epoll_event e = { .events = EPOLLIN, .data.ptr = conn };
+    struct epoll_event e = {.events = EPOLLIN, .data.ptr = conn};
     ret = epoll_ctl(conn->loop->epoll_fd, EPOLL_CTL_ADD, conn->fd, &e);
     assert(ret == 0 && "epoll_ctl failed");
     conn->cb = cb;
@@ -472,8 +462,10 @@ int meaps_loop_run(meaps_loop_t *loop, int timeout)
             ssize_t rret, total_read = 0;
             while (1) {
                 meaps_buffer_expand(&conn->rbuffer, 16834);
-                while ((rret = read(conn->fd, conn->rbuffer.base + conn->rbuffer.len, conn->rbuffer.cap - conn->rbuffer.len)) == -1 && errno == EINTR)
-                        ;
+                while ((rret = read(conn->fd, conn->rbuffer.base + conn->rbuffer.len, conn->rbuffer.cap - conn->rbuffer.len)) ==
+                           -1 &&
+                       errno == EINTR)
+                    ;
                 if (rret < 0) {
                     if (errno != EAGAIN) {
                         conn->cb(conn, "read error");
@@ -495,7 +487,8 @@ int meaps_loop_run(meaps_loop_t *loop, int timeout)
             }
         }
         if (events[n].events & EPOLLOUT) {
-            ssize_t wret, total_written = 0;;
+            ssize_t wret, total_written = 0;
+            ;
             meaps_iovec_t iov;
 
             while (!meaps_buffer_empty(&conn->wbuffer)) {
@@ -547,10 +540,11 @@ meaps_http1client_t *meaps_http1client_create(meaps_loop_t *loop)
     return client;
 }
 
-
-#define container_of(ptr, type, member) ({          \
-            const typeof(((type *)0)->member)*__mptr = (ptr);    \
-                         (type *)((char *)__mptr - offsetof(type, member)); })
+#define container_of(ptr, type, member)                                                                                            \
+    ({                                                                                                                             \
+        const typeof(((type *)0)->member) *__mptr = (ptr);                                                                         \
+        (type *)((char *)__mptr - offsetof(type, member));                                                                         \
+    })
 
 void meaps_http1client_on_connect(meaps_conn_t *conn, const char *err)
 {
@@ -564,7 +558,8 @@ void meaps_http1client_request_sent(meaps_conn_t *conn, const char *err)
     client->on_request_sent(client, err);
 }
 
-void meaps_http1client_connect(meaps_http1client_t *client, meaps_http1client_cb on_connect_cb, struct sockaddr_storage *ss_override)
+void meaps_http1client_connect(meaps_http1client_t *client, meaps_http1client_cb on_connect_cb,
+                               struct sockaddr_storage *ss_override)
 {
     client->conn.state = START;
 
@@ -586,6 +581,8 @@ void meaps_http1client_connect(meaps_http1client_t *client, meaps_http1client_cb
     meaps_conn_connect(&client->conn, client->loop, &client->ss_dst, meaps_http1client_on_connect);
 }
 
+int verbose = 1;
+
 #define CRLF "\r\n"
 
 void meaps_http1client_write_request(meaps_http1client_t *client, meaps_request_t *req, meaps_http1client_cb on_request_sent_cb)
@@ -602,12 +599,20 @@ void meaps_http1client_write_request(meaps_http1client_t *client, meaps_request_
     meaps_buffer_write(&client->conn.wbuffer, " ", 1);
     meaps_buffer_write(&client->conn.wbuffer, "HTTP/1.1", 8);
     meaps_buffer_write(&client->conn.wbuffer, CRLF, 2);
+    if (verbose) {
+        meaps_iovec_t iov = meaps_buffer_get_iovec(&client->conn.wbuffer);
+        fprintf(stderr, "> %.*s", (int)iov.len, iov.base);
+    }
 
     for (i = 0; i < req->nr_headers; i++) {
         meaps_buffer_write(&client->conn.wbuffer, req->headers[i].name.base, req->headers[i].name.len);
         meaps_buffer_write(&client->conn.wbuffer, ": ", 2);
         meaps_buffer_write(&client->conn.wbuffer, req->headers[i].value.base, req->headers[i].value.len);
         meaps_buffer_write(&client->conn.wbuffer, CRLF, 2);
+        if (verbose) {
+            fprintf(stderr, "> %.*s: %.*s\n", (int)req->headers[i].name.len, req->headers[i].name.base,
+                    (int)req->headers[i].value.len, req->headers[i].value.base);
+        }
     }
     meaps_buffer_write(&client->conn.wbuffer, CRLF, 2);
     client->conn.state = WRITE_HEAD;
@@ -644,7 +649,8 @@ void on_read_head(meaps_conn_t *conn, const char *err)
     req = client->req;
     iov = meaps_buffer_get_iovec(&client->conn.rbuffer);
     req->res.nr_headers = ARRAY_SIZE(req->res.headers);
-    pret = phr_parse_response(iov.base, iov.len, &req->res.minor_version, &req->res.status, (const char **)&req->res.msg.base, &req->res.msg.len, req->res.headers, &req->res.nr_headers, 0);
+    pret = phr_parse_response(iov.base, iov.len, &req->res.minor_version, &req->res.status, (const char **)&req->res.msg.base,
+                              &req->res.msg.len, req->res.headers, &req->res.nr_headers, 0);
     if (pret == -1) {
         err = "failed to parse response";
         goto out;
@@ -694,12 +700,11 @@ void on_read_head(meaps_conn_t *conn, const char *err)
             }
         }
     }
-    //fprintf(stderr, "cl: %zu, chunked: %d, ka: %d\n", req->res.content_length, req->res.is_chunked, req->res.keep_alive);
+    // fprintf(stderr, "cl: %zu, chunked: %d, ka: %d\n", req->res.content_length, req->res.is_chunked, req->res.keep_alive);
 
     meaps_buffer_consume(&client->conn.rbuffer, pret);
 out:
     client->on_response_head(client, err);
-
 }
 
 void meaps_http1client_read_response_head(meaps_http1client_t *client, meaps_http1client_cb on_response_head)
@@ -811,15 +816,14 @@ void meaps_http1client_close(meaps_http1client_t *client)
             e = &evts[i];
             tdiff = ts_difftime(prev.t, e->t);
             prev = *e;
-            fprintf(stderr, "event: %s, at %ld, bytes:%zu\n", meaps_event_type(e->type), (tdiff.tv_sec * 1000) + tdiff.tv_nsec / 1000000, e->len);
+            fprintf(stderr, "event: %s, at %ld, bytes:%zu\n", meaps_event_type(e->type),
+                    (tdiff.tv_sec * 1000) + tdiff.tv_nsec / 1000000, e->len);
         }
     }
     meaps_conn_close(&client->conn);
     client->done = 1;
 }
 /***/
-
-int verbose = 1;
 
 void on_response_body(meaps_http1client_t *client, const char *err)
 {
@@ -843,15 +847,15 @@ void on_response_head(meaps_http1client_t *client, const char *err)
     }
 
     if (verbose) {
-        fprintf(stderr, "HTTP/1.%d %d %.*s\n", client->req->res.minor_version, client->req->res.status, (int)client->req->res.msg.len, client->req->res.msg.base);
+        fprintf(stderr, "< HTTP/1.%d %d %.*s\n", client->req->res.minor_version, client->req->res.status,
+                (int)client->req->res.msg.len, client->req->res.msg.base);
         for (int i = 0; i < client->req->res.nr_headers; i++) {
             struct phr_header *h = &client->req->res.headers[i];
-            fprintf(stderr, "%.*s: %.*s\n", (int)h->name_len, h->name, (int)h->value_len, h->value);
+            fprintf(stderr, "< %.*s: %.*s\n", (int)h->name_len, h->name, (int)h->value_len, h->value);
         }
     }
 
-    if ((err == meaps_err_connection_closed && client->req->res.keep_alive == 0)
-        || client->req->res.content_length == 0) {
+    if ((err == meaps_err_connection_closed && client->req->res.keep_alive == 0) || client->req->res.content_length == 0) {
         client->conn.loop->stop = 1;
         meaps_http1client_close(client);
         return;
@@ -883,7 +887,7 @@ void on_connect(meaps_http1client_t *client, const char *err)
 
 void usage(const char *progname)
 {
-    fprintf(stderr, "usage: %s [--force-ip <ip>] url\n", progname);
+    fprintf(stderr, "usage: %s [--force-ip <ip>] [--header <header name>:<header value>] url\n", progname);
 }
 
 int main(int argc, char **argv)
@@ -894,7 +898,9 @@ int main(int argc, char **argv)
     meaps_http1client_t *client = meaps_http1client_create(loop);
     char *progname = *argv;
     char *url_arg = NULL;
-    struct sockaddr_storage ss, *ss_override = NULL; 
+    struct sockaddr_storage ss, *ss_override = NULL;
+    meaps_header_t *to_add = NULL;
+    int i, nr_to_add = 0;
 
     argv++;
     if (*argv == NULL)
@@ -923,6 +929,25 @@ int main(int argc, char **argv)
             }
             ss_override = &ss;
             argv++;
+        } else if (!strcmp("--header", *argv)) {
+            argv++;
+            if (*argv == NULL) {
+                fprintf(stderr, "Missing argument for `--header`\n");
+                goto usage;
+            }
+
+            char *colon = strchr(*argv, ':');
+            if (colon == NULL) {
+                fprintf(stderr, "A header must contain a value separated by a colon `:`\n");
+                goto usage;
+            }
+            *colon = '\0';
+            to_add = realloc(to_add, sizeof(*to_add) * (nr_to_add + 1));
+            meaps_header_t *h = &to_add[nr_to_add];
+            h->name = meaps_iovec_init(*argv, strlen(*argv));
+            h->value = meaps_iovec_init(colon + 1, strlen(colon + 1));
+            nr_to_add++;
+            argv++;
         } else {
             url_arg = *argv++;
             if (*argv != NULL) {
@@ -943,6 +968,10 @@ int main(int argc, char **argv)
     }
     req.method = MEAPS_IOVEC_STRLIT("GET");
     meaps_request_add_header(&req, MEAPS_IOVEC_STRLIT("host"), req.url.raw.host);
+    for (i = 0; i < nr_to_add; i++) {
+        meaps_request_add_header(&req, to_add[i].name, to_add[i].value);
+    }
+    free(to_add);
     client->req = &req;
     meaps_http1client_connect(client, on_connect, ss_override);
 
