@@ -50,7 +50,7 @@ static void setup_bio(meaps_conn_t *conn)
         static pthread_mutex_t init_lock = PTHREAD_MUTEX_INITIALIZER;
         pthread_mutex_lock(&init_lock);
         if (bio_methods == NULL) {
-            BIO_METHOD *biom = BIO_meth_new(BIO_TYPE_FD, "h2o_socket");
+            BIO_METHOD *biom = BIO_meth_new(BIO_TYPE_FD, "meaps_socket");
             BIO_meth_set_write(biom, write_bio);
             BIO_meth_set_read(biom, read_bio);
             BIO_meth_set_puts(biom, puts_bio);

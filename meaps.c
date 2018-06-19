@@ -36,7 +36,7 @@ meaps_iovec_t meaps_iovec_init(char *base, size_t len)
 
 meaps_iovec_t meaps_iovec_dup(char *base, size_t len)
 {
-    meaps_iovec_t iov = {malloc(len), len};
+    meaps_iovec_t iov = {meaps_alloc(len), len};
     memcpy(iov.base, base, len);
     return iov;
 }
@@ -202,7 +202,7 @@ void meaps_buffer_expand(meaps_buffer_t *buf, size_t len)
     while (len + buf->len > new_cap) {
         new_cap *= 2;
     }
-    buf->base = realloc(buf->base, new_cap);
+    buf->base = meaps_realloc(buf->base, new_cap);
     assert(buf->base != NULL);
     buf->cap = new_cap;
 }
@@ -257,7 +257,7 @@ typedef struct st_meaps_request_t {
 
 void meaps_request_add_header(meaps_request_t *req, meaps_iovec_t name, meaps_iovec_t value)
 {
-    req->headers = realloc(req->headers, sizeof(*req->headers) * (req->nr_headers + 1));
+    req->headers = meaps_realloc(req->headers, sizeof(*req->headers) * (req->nr_headers + 1));
     req->headers[req->nr_headers].name = name;
     req->headers[req->nr_headers].value = value;
     req->nr_headers++;
@@ -286,7 +286,7 @@ const char *meaps_event_type(meaps_event_type_t type)
 }
 void meaps_conn_add_event(meaps_conn_t *conn, size_t len)
 {
-    meaps_event_t *e = malloc(sizeof(*e));
+    meaps_event_t *e = meaps_alloc(sizeof(*e));
     e->type = conn->state;
     clock_gettime(CLOCK_MONOTONIC, &e->t);
     e->len = len;
@@ -370,7 +370,7 @@ meaps_loop_t *meaps_loop_create(void)
     efd = epoll_create(10);
     if (efd < 0)
         return NULL;
-    loop = malloc(sizeof(*loop));
+    loop = meaps_alloc(sizeof(*loop));
     loop->epoll_fd = efd;
     loop->stop = 0;
     return loop;
@@ -904,7 +904,7 @@ int main(int argc, char **argv)
                 goto usage;
             }
             *colon = '\0';
-            to_add = realloc(to_add, sizeof(*to_add) * (nr_to_add + 1));
+            to_add = meaps_realloc(to_add, sizeof(*to_add) * (nr_to_add + 1));
             meaps_header_t *h = &to_add[nr_to_add];
             h->name = meaps_iovec_init(*argv, strlen(*argv));
             h->value = meaps_iovec_init(colon + 1, strlen(colon + 1));
