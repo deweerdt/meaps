@@ -887,7 +887,7 @@ void on_connect(meaps_http1client_t *client, const char *err)
 
 void usage(const char *progname)
 {
-    fprintf(stderr, "usage: %s [--force-ip <ip>] url\n", progname);
+    fprintf(stderr, "usage: %s [--force-ip <ip>] [--header <header name>:<header value>] url\n", progname);
 }
 
 int main(int argc, char **argv)
