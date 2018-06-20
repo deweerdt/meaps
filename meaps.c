@@ -900,7 +900,6 @@ void meaps_http1client_close(meaps_http1client_t *client)
                     (tdiff.tv_sec * 1000) + tdiff.tv_nsec / 1000000, e->len);
         }
     }
-    meaps_conn_close(&client->conn);
     client->done = 1;
 }
 /***/
@@ -1077,6 +1076,7 @@ int main(int argc, char **argv)
         if (client->done)
             break;
     }
+    meaps_conn_close(&client->conn);
     meaps_loop_destroy(loop);
     meaps_request_dispose(&req);
     free(client);
