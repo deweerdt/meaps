@@ -66,10 +66,21 @@ static void setup_bio(meaps_conn_t *conn)
         meaps_fatal("no memory");
     BIO_set_data(bio, conn);
     BIO_set_init(bio, 1);
-    SSL_set_bio(conn->ssl, bio, bio);
+    SSL_set_bio(conn->ssl.ossl, bio, bio);
 }
 
-void meaps_conn_ssl_init(meaps_conn_t *conn)
+void meaps_conn_ssl_do_handshake(meaps_conn_t *conn)
 {
+    int ret = SSL_connect(conn->ssl.ossl);
+    switch (ret = SSL_get_error(conn->ssl.ossl, ret)) {
+    case SSL_ERROR_WANT_READ:
+    case SSL_ERROR_WANT_WRITE:
+    }
+}
+
+void meaps_conn_ssl_init(meaps_conn_t *conn, SSL_CTX *ctx)
+{
+    conn->ssl.ossl = SSL_new(ctx);
     setup_bio(conn);
 }
+

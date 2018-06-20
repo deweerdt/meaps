@@ -48,10 +48,18 @@ typedef struct st_meaps_buffer_t {
     size_t cap;
 } meaps_buffer_t;
 
+typedef enum {
+    MEAPS_SSL_WRITING,
+    MEAPS_SSL_READING,
+} meaps_conn_ssl_state_t;
+
 typedef void (*meaps_conn_cb)(struct st_meaps_conn_t *, const char *);
 typedef struct st_meaps_conn_t {
     int fd;
-    SSL *ssl;
+    struct {
+        SSL *ossl;
+        meaps_conn_ssl_state_t state;
+    } ssl;
     meaps_conn_cb cb;
     struct st_meaps_loop_t *loop;
     meaps_buffer_t wbuffer;
