@@ -59,6 +59,7 @@ typedef struct st_meaps_conn_t {
     struct {
         SSL *ossl;
         meaps_conn_ssl_state_t state;
+        meaps_conn_cb on_connect;
     } ssl;
     meaps_conn_cb cb;
     struct st_meaps_loop_t *loop;
@@ -66,6 +67,7 @@ typedef struct st_meaps_conn_t {
     meaps_buffer_t rbuffer;
     struct st_meaps_event_t *events;
     meaps_event_type_t state;
+    int dont_read;
 } meaps_conn_t;
 
 typedef struct st_meaps_event_t {
@@ -74,5 +76,14 @@ typedef struct st_meaps_event_t {
     size_t len;
     struct st_meaps_event_t *next;
 } meaps_event_t;
+
+/***/
+
+void meaps_conn_wait_write(meaps_conn_t *conn, meaps_conn_cb cb);
+void meaps_conn_wait_read(meaps_conn_t *conn, meaps_conn_cb cb);
+
+/***/
+
+void meaps_conn_ssl_do_handshake(meaps_conn_t *conn, meaps_conn_cb cb);
 
 #endif /* MEAPS_H_ */

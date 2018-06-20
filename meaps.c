@@ -74,6 +74,7 @@ typedef struct st_meaps_url_t {
 } meaps_url_t;
 
 const char *meaps_err_url_is_empty = "Empty URL";
+const char *meaps_err_unknown_scheme = "Unknown scheme";
 const char *meaps_err_url_scheme_unrecognized = "Unrecognized scheme in URL";
 const char *meaps_err_url_invalid_port = "Invalid port in URL";
 const char *meaps_err_url_invalid_chars_after_authority = "Invalid chars after authority in URL";
@@ -113,8 +114,13 @@ no_scheme:
         i += 3;
         if (url->raw.scheme.len == 5 && memmem("https", 5, url->raw.scheme.base, url->raw.scheme.len)) {
             uport = 443; /* may be overriden later */
+            url->parsed.scheme = HTTPS;
         } else if (url->raw.scheme.len == 4 && memmem("http", 4, url->raw.scheme.base, url->raw.scheme.len)) {
             uport = 80; /* may be overriden later */
+            url->parsed.scheme = HTTP;
+        } else {
+            *err = meaps_err_unknown_scheme;
+            return;
         }
     } else {
         url->raw.scheme.base = NULL;
@@ -344,11 +350,16 @@ ssize_t meaps_conn_read_impl(meaps_conn_t *conn)
             rret = SSL_read(conn->ssl.ossl, conn->rbuffer.base + conn->rbuffer.len, conn->rbuffer.cap - conn->rbuffer.len);
             if (rret > 0) {
                 conn->rbuffer.len += rret;
+                total_read += rret;
                 continue;
             }
             switch (ret = SSL_get_error(conn->ssl.ossl, rret)) {
                 case SSL_ERROR_WANT_READ:
-                    meaps_loop_wait_read(conn->loop, conn);
+                    if (total_read > 0) {
+                        conn->cb(conn, NULL);
+                    } else {
+                        meaps_loop_wait_read(conn->loop, conn);
+                    }
                     return total_read;
                 case SSL_ERROR_WANT_WRITE:
                     meaps_loop_wait_write(conn->loop, conn);
@@ -409,6 +420,7 @@ ssize_t meaps_conn_write_impl(meaps_conn_t *conn)
                     default:
                         snprintf(ssl_error, sizeof(ssl_error), "%d", ret);
                         conn->cb(conn, ssl_error);
+                        return -1;
                 }
             }
             total_written += wret;
@@ -426,6 +438,14 @@ void meaps_conn_wait_write(meaps_conn_t *conn, meaps_conn_cb cb)
     if (conn->ssl.ossl != NULL)
         conn->ssl.state = MEAPS_SSL_WRITING;
     meaps_loop_wait_write(conn->loop, conn);
+}
+
+void meaps_conn_wait_read(meaps_conn_t *conn, meaps_conn_cb cb)
+{
+    conn->cb = cb;
+    if (conn->ssl.ossl != NULL)
+        conn->ssl.state = MEAPS_SSL_READING;
+    meaps_loop_wait_read(conn->loop, conn);
 }
 
 size_t sizeof_ss(struct sockaddr_storage *ss)
@@ -473,6 +493,9 @@ void meaps_conn_close(meaps_conn_t *conn)
     close(conn->fd);
     meaps_buffer_destroy(&conn->wbuffer);
     meaps_buffer_destroy(&conn->rbuffer);
+    if (conn->ssl.ossl) {
+        SSL_free(conn->ssl.ossl);
+    }
     conn->fd = -1;
 }
 
@@ -515,16 +538,15 @@ void meaps_loop_wait_read(meaps_loop_t *loop, struct st_meaps_conn_t *conn)
     int ret;
     struct epoll_event e = {.events = EPOLLIN, .data.ptr = conn};
     ret = epoll_ctl(loop->epoll_fd, EPOLL_CTL_ADD, conn->fd, &e);
+    if (conn->ssl.ossl != NULL)
+        conn->ssl.state = MEAPS_SSL_READING;
     assert(ret == 0 && "epoll_ctl failed");
 }
 
 void meaps_conn_read(meaps_conn_t *conn, meaps_conn_cb cb)
 {
-    int ret;
-    struct epoll_event e = {.events = EPOLLIN, .data.ptr = conn};
-    ret = epoll_ctl(conn->loop->epoll_fd, EPOLL_CTL_ADD, conn->fd, &e);
-    assert(ret == 0 && "epoll_ctl failed");
     conn->cb = cb;
+    meaps_loop_wait_read(conn->loop, conn);
 }
 
 int meaps_loop_run(meaps_loop_t *loop, int timeout)
@@ -550,6 +572,11 @@ int meaps_loop_run(meaps_loop_t *loop, int timeout)
             continue;
         }
         if (events[n].events & EPOLLIN) {
+            if (conn->dont_read) {
+                conn->dont_read = 0;
+                conn->cb(conn, NULL);
+                continue;
+            }
 reading:
             if (conn->ssl.ossl != NULL && conn->ssl.state == MEAPS_SSL_WRITING)
                 goto writing;
@@ -888,7 +915,6 @@ void on_response_body(meaps_http1client_t *client, const char *err)
             fprintf(stderr, "%.*s\n", (int)body.len, body.base);
         }
     }
-    client->conn.loop->stop = 1;
     meaps_http1client_close(client);
 }
 
@@ -909,7 +935,6 @@ void on_response_head(meaps_http1client_t *client, const char *err)
     }
 
     if ((err == meaps_err_connection_closed && client->req->res.keep_alive == 0) || client->req->res.content_length == 0) {
-        client->conn.loop->stop = 1;
         meaps_http1client_close(client);
         return;
     }
@@ -928,6 +953,17 @@ void on_request_written(meaps_http1client_t *client, const char *err)
     meaps_http1client_read_response_head(client, on_response_head);
 }
 
+void on_ssl_connect(meaps_conn_t *conn, const char *err)
+{
+    meaps_http1client_t *client = container_of(conn, meaps_http1client_t, conn);
+    if (err != NULL) {
+        fprintf(stderr, "connection failed: %s, %s\n", err, strerror(errno));
+        meaps_http1client_close(client);
+        return;
+    }
+    meaps_http1client_write_request(client, client->req, on_request_written);
+}
+
 void on_connect(meaps_http1client_t *client, const char *err)
 {
     if (err != NULL) {
@@ -936,8 +972,8 @@ void on_connect(meaps_http1client_t *client, const char *err)
         return;
     }
     if (client->conn.ssl.ossl != NULL) {
-        meaps_conn_ssl_do_handshake(&client->conn);
-        
+        meaps_conn_ssl_do_handshake(&client->conn, on_ssl_connect);
+        return;
     }
     meaps_http1client_write_request(client, client->req, on_request_written);
 }
@@ -1044,6 +1080,8 @@ int main(int argc, char **argv)
     meaps_loop_destroy(loop);
     meaps_request_dispose(&req);
     free(client);
+    if (ssl_ctx)
+        SSL_CTX_free(ssl_ctx);
     return 0;
 usage:
     usage(progname);

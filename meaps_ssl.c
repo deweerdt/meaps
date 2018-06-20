@@ -69,13 +69,37 @@ static void setup_bio(meaps_conn_t *conn)
     SSL_set_bio(conn->ssl.ossl, bio, bio);
 }
 
-void meaps_conn_ssl_do_handshake(meaps_conn_t *conn)
+static void do_handshake(meaps_conn_t *conn, const char *err)
 {
+    static __thread char ssl_error[sizeof("-2147483648")];
+    if (err != NULL) {
+        conn->ssl.on_connect(conn, err);
+        return;
+    }
     int ret = SSL_connect(conn->ssl.ossl);
+    if (ret > 0) {
+        conn->ssl.on_connect(conn, NULL);
+        return;
+    }
     switch (ret = SSL_get_error(conn->ssl.ossl, ret)) {
     case SSL_ERROR_WANT_READ:
+        conn->dont_read = 1;
+        meaps_conn_wait_read(conn, do_handshake);
+        return;
     case SSL_ERROR_WANT_WRITE:
+        meaps_conn_wait_write(conn, do_handshake);
+        return;
+    default:
+        snprintf(ssl_error, sizeof(ssl_error), "%d", ret);
+        conn->cb(conn, ssl_error);
+        return;
     }
+}
+void meaps_conn_ssl_do_handshake(meaps_conn_t *conn, meaps_conn_cb cb)
+{
+    conn->ssl.on_connect = cb;
+    SSL_set_fd(conn->ssl.ossl, conn->fd);
+    do_handshake(conn, NULL);
 }
 
 void meaps_conn_ssl_init(meaps_conn_t *conn, SSL_CTX *ctx)
