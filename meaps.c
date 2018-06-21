@@ -290,10 +290,15 @@ void meaps_request_dispose(meaps_request_t *req)
 const char *meaps_event_type(meaps_event_type_t type)
 {
     const char *etxt[] = {
-        [START] = "START",           [DNS] = "DNS", [SSL_HANDSHAKE] = "SSL_HANDSHAKE",
-        [CONNECT] = "CONNECT",       [READ_HEAD] = "READ_HEAD",
-        [READ_BODY] = "READ_BODY",   [WRITE_HEAD] = "WRITE_HEAD",
-        [WRITE_BODY] = "WRITE_BODY", [CLOSE] = "CLOSE",
+        [START] = "START",
+        [DNS] = "DNS",
+        [SSL_HANDSHAKE] = "SSL_HANDSHAKE",
+        [CONNECT] = "CONNECT",
+        [READ_HEAD] = "READ_HEAD",
+        [READ_BODY] = "READ_BODY",
+        [WRITE_HEAD] = "WRITE_HEAD",
+        [WRITE_BODY] = "WRITE_BODY",
+        [CLOSE] = "CLOSE",
     };
     if (type >= ARRAY_SIZE(etxt))
         return "unknown event type";
@@ -319,9 +324,8 @@ ssize_t meaps_conn_read_impl(meaps_conn_t *conn)
     if (conn->ssl.ossl == NULL) {
         while (1) {
             meaps_buffer_expand(&conn->rbuffer, 16834);
-            while ((rret = read(conn->fd, conn->rbuffer.base + conn->rbuffer.len, conn->rbuffer.cap - conn->rbuffer.len)) ==
-                    -1 &&
-                    errno == EINTR)
+            while ((rret = read(conn->fd, conn->rbuffer.base + conn->rbuffer.len, conn->rbuffer.cap - conn->rbuffer.len)) == -1 &&
+                   errno == EINTR)
                 ;
             if (rret < 0) {
                 if (errno != EAGAIN) {
@@ -354,23 +358,23 @@ ssize_t meaps_conn_read_impl(meaps_conn_t *conn)
                 continue;
             }
             switch (ret = SSL_get_error(conn->ssl.ossl, rret)) {
-                case SSL_ERROR_WANT_READ:
-                    if (total_read > 0) {
-                        conn->cb(conn, NULL);
-                    } else {
-                        meaps_loop_wait_read(conn->loop, conn);
-                    }
-                    return total_read;
-                case SSL_ERROR_WANT_WRITE:
-                    meaps_loop_wait_write(conn->loop, conn);
-                    return total_read;
-                case SSL_ERROR_ZERO_RETURN:
-                    conn->cb(conn, meaps_err_connection_closed);
-                    return total_read;
-                default:
-                    snprintf(ssl_error, sizeof(ssl_error), "%d", ret);
-                    conn->cb(conn, ssl_error);
-                    return -1;
+            case SSL_ERROR_WANT_READ:
+                if (total_read > 0) {
+                    conn->cb(conn, NULL);
+                } else {
+                    meaps_loop_wait_read(conn->loop, conn);
+                }
+                return total_read;
+            case SSL_ERROR_WANT_WRITE:
+                meaps_loop_wait_write(conn->loop, conn);
+                return total_read;
+            case SSL_ERROR_ZERO_RETURN:
+                conn->cb(conn, meaps_err_connection_closed);
+                return total_read;
+            default:
+                snprintf(ssl_error, sizeof(ssl_error), "%d", ret);
+                conn->cb(conn, ssl_error);
+                return -1;
             }
         }
     }
@@ -408,19 +412,19 @@ ssize_t meaps_conn_write_impl(meaps_conn_t *conn)
                 int ret;
                 static __thread char ssl_error[sizeof("-2147483648")];
                 switch (ret = SSL_get_error(conn->ssl.ossl, wret)) {
-                    case SSL_ERROR_WANT_READ:
-                        meaps_loop_wait_read(conn->loop, conn);
-                        return total_written;
-                    case SSL_ERROR_WANT_WRITE:
-                        meaps_loop_wait_write(conn->loop, conn);
-                        return total_written;
-                    case SSL_ERROR_ZERO_RETURN:
-                        conn->cb(conn, meaps_err_connection_closed);
-                        return total_written;
-                    default:
-                        snprintf(ssl_error, sizeof(ssl_error), "%d", ret);
-                        conn->cb(conn, ssl_error);
-                        return -1;
+                case SSL_ERROR_WANT_READ:
+                    meaps_loop_wait_read(conn->loop, conn);
+                    return total_written;
+                case SSL_ERROR_WANT_WRITE:
+                    meaps_loop_wait_write(conn->loop, conn);
+                    return total_written;
+                case SSL_ERROR_ZERO_RETURN:
+                    conn->cb(conn, meaps_err_connection_closed);
+                    return total_written;
+                default:
+                    snprintf(ssl_error, sizeof(ssl_error), "%d", ret);
+                    conn->cb(conn, ssl_error);
+                    return -1;
                 }
             }
             total_written += wret;
@@ -577,14 +581,14 @@ int meaps_loop_run(meaps_loop_t *loop, int timeout)
                 conn->cb(conn, NULL);
                 continue;
             }
-reading:
+        reading:
             if (conn->ssl.ossl != NULL && conn->ssl.state == MEAPS_SSL_WRITING)
                 goto writing;
             total_read = meaps_conn_read_impl(conn);
             meaps_conn_add_event(conn, total_read);
         }
         if (events[n].events & EPOLLOUT) {
-writing:
+        writing:
             if (conn->ssl.ossl != NULL && conn->ssl.state == MEAPS_SSL_READING)
                 goto reading;
             total_written = meaps_conn_write_impl(conn);

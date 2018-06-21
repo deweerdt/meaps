@@ -12,18 +12,18 @@ static inline void meaps_fatal(const char *msg)
 
 static inline void *meaps_alloc(size_t size)
 {
-     void *ret = malloc(size);
-     if (ret == NULL)
-         meaps_fatal("no memory");
-     return ret;
+    void *ret = malloc(size);
+    if (ret == NULL)
+        meaps_fatal("no memory");
+    return ret;
 }
 
 static inline void *meaps_realloc(void *ptr, size_t size)
 {
-     void *ret = realloc(ptr, size);
-     if (ret == NULL)
-         meaps_fatal("no memory");
-     return ret;
+    void *ret = realloc(ptr, size);
+    if (ret == NULL)
+        meaps_fatal("no memory");
+    return ret;
 }
 
 struct st_meaps_loop_t;

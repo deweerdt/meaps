@@ -31,15 +31,15 @@ static int puts_bio(BIO *b, const char *str)
 static long ctrl_bio(BIO *b, int cmd, long num, void *ptr)
 {
     switch (cmd) {
-        case BIO_CTRL_GET_CLOSE:
-            return BIO_get_shutdown(b);
-        case BIO_CTRL_SET_CLOSE:
-            BIO_set_shutdown(b, (int)num);
-            return 1;
-        case BIO_CTRL_FLUSH:
-            return 1;
-        default:
-            return 0;
+    case BIO_CTRL_GET_CLOSE:
+        return BIO_get_shutdown(b);
+    case BIO_CTRL_SET_CLOSE:
+        BIO_set_shutdown(b, (int)num);
+        return 1;
+    case BIO_CTRL_FLUSH:
+        return 1;
+    default:
+        return 0;
     }
 }
 
@@ -108,4 +108,3 @@ void meaps_conn_ssl_init(meaps_conn_t *conn, SSL_CTX *ctx)
     conn->ssl.ossl = SSL_new(ctx);
     setup_bio(conn);
 }
-
