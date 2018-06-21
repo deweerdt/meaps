@@ -33,6 +33,7 @@ struct st_meaps_conn_t;
 typedef enum {
     START,
     DNS,
+    SSL_HANDSHAKE,
     CONNECT,
     READ_HEAD,
     READ_BODY,

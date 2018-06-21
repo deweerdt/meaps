@@ -290,7 +290,7 @@ void meaps_request_dispose(meaps_request_t *req)
 const char *meaps_event_type(meaps_event_type_t type)
 {
     const char *etxt[] = {
-        [START] = "START",           [DNS] = "DNS",
+        [START] = "START",           [DNS] = "DNS", [SSL_HANDSHAKE] = "SSL_HANDSHAKE",
         [CONNECT] = "CONNECT",       [READ_HEAD] = "READ_HEAD",
         [READ_BODY] = "READ_BODY",   [WRITE_HEAD] = "WRITE_HEAD",
         [WRITE_BODY] = "WRITE_BODY", [CLOSE] = "CLOSE",
@@ -965,6 +965,7 @@ void on_ssl_connect(meaps_conn_t *conn, const char *err)
 
 void on_connect(meaps_http1client_t *client, const char *err)
 {
+    meaps_conn_add_event(&client->conn, 0);
     if (err != NULL) {
         fprintf(stderr, "connection failed: %s, %s\n", err, strerror(errno));
         meaps_http1client_close(client);

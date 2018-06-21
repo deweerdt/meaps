@@ -98,6 +98,7 @@ static void do_handshake(meaps_conn_t *conn, const char *err)
 void meaps_conn_ssl_do_handshake(meaps_conn_t *conn, meaps_conn_cb cb)
 {
     conn->ssl.on_connect = cb;
+    conn->state = SSL_HANDSHAKE;
     SSL_set_fd(conn->ssl.ossl, conn->fd);
     do_handshake(conn, NULL);
 }
