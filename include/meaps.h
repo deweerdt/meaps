@@ -118,7 +118,6 @@ static inline meaps_iovec_t meaps_iovec_init(char *base, size_t len)
     return (meaps_iovec_t){base, len};
 }
 
-
 /***/
 
 enum meaps_url_scheme_t { HTTP, HTTPS };

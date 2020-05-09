@@ -814,4 +814,3 @@ void meaps_http1client_close(meaps_http1client_t *client)
     }
     client->done = 1;
 }
-
