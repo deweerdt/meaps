@@ -413,7 +413,7 @@ void meaps_conn_connect(meaps_conn_t *conn, struct st_meaps_loop_t *loop, struct
 {
     int s, ret, one = 1;
 
-    s = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    s = socket(ss->ss_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (s < 0) {
         cb(conn, meaps_err_connection_error);
         return;
