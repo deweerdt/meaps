@@ -14,26 +14,10 @@
 #include <sys/types.h>
 #include <netinet/tcp.h>
 
-#include "picohttpparser.h"
-
 #include "meaps.h"
 #include "meaps_ssl.h"
 
 struct st_meaps_conn_t;
-
-#define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
-typedef struct st_meaps_iovec_t {
-    char *base;
-    size_t len;
-} meaps_iovec_t;
-
-#define MEAPS_IOVEC_STRLIT(s) meaps_iovec_init((s ""), sizeof(s) - 1)
-#define MEAPS_IOVEC_STR(s) meaps_iovec_init((s), strlen(s))
-
-meaps_iovec_t meaps_iovec_init(char *base, size_t len)
-{
-    return (meaps_iovec_t){base, len};
-}
 
 meaps_iovec_t meaps_iovec_dup(char *base, size_t len)
 {
@@ -44,40 +28,19 @@ meaps_iovec_t meaps_iovec_dup(char *base, size_t len)
 
 /***/
 
-const char *meaps_err_connection_error = "connection error";
-const char *meaps_err_invalid_url = "invalid url";
-const char *meaps_err_connection_closed = "connection closed";
-const char *meaps_err_connection_closed_prematurely = "connection closed prematurely";
-const char *meaps_err_io_error = "I/O error";
+const char meaps_err_connection_error[] = "connection error";
+const char meaps_err_invalid_url[] = "invalid url";
+const char meaps_err_connection_closed[] = "connection closed";
+const char meaps_err_connection_closed_prematurely[] = "connection closed prematurely";
+const char meaps_err_io_error[] = "I/O error";
 
 /***/
 
-typedef struct st_meaps_header_t {
-    meaps_iovec_t name;
-    meaps_iovec_t value;
-} meaps_header_t;
-
-/***/
-
-enum meaps_url_scheme_t { HTTP, HTTPS };
-typedef struct st_meaps_url_t {
-    struct {
-        meaps_iovec_t scheme;
-        meaps_iovec_t host;
-        meaps_iovec_t path;
-        meaps_iovec_t port;
-    } raw;
-    struct {
-        enum meaps_url_scheme_t scheme;
-        uint16_t port;
-    } parsed;
-} meaps_url_t;
-
-const char *meaps_err_url_is_empty = "Empty URL";
-const char *meaps_err_unknown_scheme = "Unknown scheme";
-const char *meaps_err_url_scheme_unrecognized = "Unrecognized scheme in URL";
-const char *meaps_err_url_invalid_port = "Invalid port in URL";
-const char *meaps_err_url_invalid_chars_after_authority = "Invalid chars after authority in URL";
+const char meaps_err_url_is_empty[] = "Empty URL";
+const char meaps_err_unknown_scheme[] = "Unknown scheme";
+const char meaps_err_url_scheme_unrecognized[] = "Unrecognized scheme in URL";
+const char meaps_err_url_invalid_port[] = "Invalid port in URL";
+const char meaps_err_url_invalid_chars_after_authority[] = "Invalid chars after authority in URL";
 
 void meaps_url_parse(meaps_iovec_t to_parse, meaps_url_t *url, const char **err)
 {
@@ -251,24 +214,6 @@ meaps_iovec_t meaps_buffer_get_iovec(meaps_buffer_t *buf)
 }
 
 /***/
-
-typedef struct st_meaps_request_t {
-    meaps_iovec_t method;
-    meaps_url_t url;
-    meaps_header_t *headers;
-    size_t nr_headers;
-    struct {
-        int minor_version, status;
-        meaps_iovec_t msg;
-        struct phr_header headers[100];
-        size_t nr_headers;
-        size_t content_length;
-        int is_chunked;
-        int keep_alive;
-        meaps_buffer_t body;
-        struct phr_chunked_decoder chunked_decoder;
-    } res;
-} meaps_request_t;
 
 void meaps_request_add_header(meaps_request_t *req, meaps_iovec_t name, meaps_iovec_t value)
 {
@@ -468,7 +413,7 @@ void meaps_conn_connect(meaps_conn_t *conn, struct st_meaps_loop_t *loop, struct
 {
     int s, ret, one = 1;
 
-    s = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    s = socket(ss->ss_family, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (s < 0) {
         cb(conn, meaps_err_connection_error);
         return;
@@ -504,11 +449,6 @@ void meaps_conn_close(meaps_conn_t *conn)
 }
 
 /***/
-
-typedef struct st_meaps_loop_t {
-    int epoll_fd;
-    int stop;
-} meaps_loop_t;
 
 meaps_loop_t *meaps_loop_create(void)
 {
@@ -600,22 +540,6 @@ int meaps_loop_run(meaps_loop_t *loop, int timeout)
 
 /***/
 
-struct st_meaps_http1client_t;
-typedef void (*meaps_http1client_cb)(struct st_meaps_http1client_t *, const char *);
-typedef struct st_meaps_http1client_t {
-    meaps_loop_t *loop;
-    meaps_conn_t conn;
-    meaps_request_t *req;
-    struct sockaddr_storage ss_dst;
-    union {
-        meaps_http1client_cb on_connect;
-        meaps_http1client_cb on_request_sent;
-        meaps_http1client_cb on_response_head;
-        meaps_http1client_cb on_response_body;
-    };
-    int done;
-} meaps_http1client_t;
-
 meaps_http1client_t *meaps_http1client_create(meaps_loop_t *loop)
 {
     meaps_http1client_t *client;
@@ -623,12 +547,6 @@ meaps_http1client_t *meaps_http1client_create(meaps_loop_t *loop)
     client->loop = loop;
     return client;
 }
-
-#define container_of(ptr, type, member)                                                                                            \
-    ({                                                                                                                             \
-        const typeof(((type *)0)->member) *__mptr = (ptr);                                                                         \
-        (type *)((char *)__mptr - offsetof(type, member));                                                                         \
-    })
 
 void meaps_http1client_on_connect(meaps_conn_t *conn, const char *err)
 {
@@ -665,8 +583,6 @@ void meaps_http1client_connect(meaps_http1client_t *client, meaps_http1client_cb
     meaps_conn_connect(&client->conn, client->loop, &client->ss_dst, meaps_http1client_on_connect);
 }
 
-int verbose = 1;
-
 #define CRLF "\r\n"
 
 void meaps_http1client_write_request(meaps_http1client_t *client, meaps_request_t *req, meaps_http1client_cb on_request_sent_cb)
@@ -683,20 +599,12 @@ void meaps_http1client_write_request(meaps_http1client_t *client, meaps_request_
     meaps_buffer_write(&client->conn.wbuffer, " ", 1);
     meaps_buffer_write(&client->conn.wbuffer, "HTTP/1.1", 8);
     meaps_buffer_write(&client->conn.wbuffer, CRLF, 2);
-    if (verbose) {
-        meaps_iovec_t iov = meaps_buffer_get_iovec(&client->conn.wbuffer);
-        fprintf(stderr, "> %.*s", (int)iov.len, iov.base);
-    }
 
     for (i = 0; i < req->nr_headers; i++) {
         meaps_buffer_write(&client->conn.wbuffer, req->headers[i].name.base, req->headers[i].name.len);
         meaps_buffer_write(&client->conn.wbuffer, ": ", 2);
         meaps_buffer_write(&client->conn.wbuffer, req->headers[i].value.base, req->headers[i].value.len);
         meaps_buffer_write(&client->conn.wbuffer, CRLF, 2);
-        if (verbose) {
-            fprintf(stderr, "> %.*s: %.*s\n", (int)req->headers[i].name.len, req->headers[i].name.base,
-                    (int)req->headers[i].value.len, req->headers[i].value.base);
-        }
     }
     meaps_buffer_write(&client->conn.wbuffer, CRLF, 2);
     client->conn.state = WRITE_HEAD;
@@ -905,190 +813,4 @@ void meaps_http1client_close(meaps_http1client_t *client)
         }
     }
     client->done = 1;
-}
-/***/
-
-void on_response_body(meaps_http1client_t *client, const char *err)
-{
-    if (err) {
-        fprintf(stderr, "Failed to read body: %s\n", err);
-    } else {
-        meaps_iovec_t body = meaps_buffer_get_iovec(&client->req->res.body);
-        if (0) {
-            fprintf(stderr, "%.*s\n", (int)body.len, body.base);
-        }
-    }
-    meaps_http1client_close(client);
-}
-
-void on_response_head(meaps_http1client_t *client, const char *err)
-{
-    if (err != NULL && err != meaps_err_connection_closed) {
-        fprintf(stderr, "Error reading headers: %s\n", err);
-        return;
-    }
-
-    if (verbose) {
-        fprintf(stderr, "< HTTP/1.%d %d %.*s\n", client->req->res.minor_version, client->req->res.status,
-                (int)client->req->res.msg.len, client->req->res.msg.base);
-        for (int i = 0; i < client->req->res.nr_headers; i++) {
-            struct phr_header *h = &client->req->res.headers[i];
-            fprintf(stderr, "< %.*s: %.*s\n", (int)h->name_len, h->name, (int)h->value_len, h->value);
-        }
-    }
-
-    if ((err == meaps_err_connection_closed && client->req->res.keep_alive == 0) || client->req->res.content_length == 0) {
-        meaps_http1client_close(client);
-        return;
-    }
-
-    meaps_http1client_read_response_body(client, on_response_body, err == meaps_err_connection_closed);
-}
-
-void on_request_written(meaps_http1client_t *client, const char *err)
-{
-    if (err != NULL) {
-        fprintf(stderr, "connection failed: %s, %s\n", err, strerror(errno));
-        client->conn.loop->stop = 1;
-        meaps_http1client_close(client);
-        return;
-    }
-    meaps_http1client_read_response_head(client, on_response_head);
-}
-
-void on_ssl_connect(meaps_conn_t *conn, const char *err)
-{
-    meaps_http1client_t *client = container_of(conn, meaps_http1client_t, conn);
-    if (err != NULL) {
-        fprintf(stderr, "connection failed: %s, %s\n", err, strerror(errno));
-        meaps_http1client_close(client);
-        return;
-    }
-    meaps_http1client_write_request(client, client->req, on_request_written);
-}
-
-void on_connect(meaps_http1client_t *client, const char *err)
-{
-    meaps_conn_add_event(&client->conn, 0);
-    if (err != NULL) {
-        fprintf(stderr, "connection failed: %s, %s\n", err, strerror(errno));
-        meaps_http1client_close(client);
-        return;
-    }
-    if (client->conn.ssl.ossl != NULL) {
-        meaps_conn_ssl_do_handshake(&client->conn, on_ssl_connect);
-        return;
-    }
-    meaps_http1client_write_request(client, client->req, on_request_written);
-}
-
-void usage(const char *progname)
-{
-    fprintf(stderr, "usage: %s [--force-ip <ip>] [--header <header name>:<header value>] url\n", progname);
-}
-
-int main(int argc, char **argv)
-{
-    const char *err = NULL;
-    meaps_loop_t *loop = meaps_loop_create();
-    meaps_request_t req;
-    meaps_http1client_t *client = meaps_http1client_create(loop);
-    char *progname = *argv;
-    char *url_arg = NULL;
-    struct sockaddr_storage ss, *ss_override = NULL;
-    meaps_header_t *to_add = NULL;
-    int i, nr_to_add = 0;
-    SSL_CTX *ssl_ctx = NULL;
-
-    argv++;
-    if (*argv == NULL)
-        goto usage;
-
-    while (*argv) {
-        if (!strcmp("--force-ip", *argv)) {
-            unsigned char buf[sizeof(struct in6_addr)];
-            memset(&ss, 0, sizeof(ss));
-            argv++;
-            if (*argv == NULL) {
-                fprintf(stderr, "Missing argument for `--force-ip`\n");
-                goto usage;
-            }
-            if (inet_pton(AF_INET, *argv, buf)) {
-                struct sockaddr_in *sin = (struct sockaddr_in *)&ss;
-                sin->sin_family = AF_INET;
-                memcpy(&sin->sin_addr, buf, sizeof(sin->sin_addr));
-            } else if (inet_pton(AF_INET6, *argv, buf)) {
-                struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&ss;
-                sin6->sin6_family = AF_INET6;
-                memcpy(&sin6->sin6_addr, buf, sizeof(sin6->sin6_addr));
-            } else {
-                fprintf(stderr, "Invalid IP address for `--force-ip`: %s\n", *argv);
-                return 1;
-            }
-            ss_override = &ss;
-            argv++;
-        } else if (!strcmp("--header", *argv)) {
-            argv++;
-            if (*argv == NULL) {
-                fprintf(stderr, "Missing argument for `--header`\n");
-                goto usage;
-            }
-
-            char *colon = strchr(*argv, ':');
-            if (colon == NULL) {
-                fprintf(stderr, "A header must contain a value separated by a colon `:`\n");
-                goto usage;
-            }
-            *colon = '\0';
-            to_add = meaps_realloc(to_add, sizeof(*to_add) * (nr_to_add + 1));
-            meaps_header_t *h = &to_add[nr_to_add];
-            h->name = meaps_iovec_init(*argv, strlen(*argv));
-            h->value = meaps_iovec_init(colon + 1, strlen(colon + 1));
-            nr_to_add++;
-            argv++;
-        } else {
-            url_arg = *argv++;
-            if (*argv != NULL) {
-                goto usage;
-            }
-            break;
-        }
-    }
-    if (!url_arg) {
-        goto usage;
-    }
-
-    memset(&req, 0, sizeof(req));
-    meaps_url_parse(MEAPS_IOVEC_STR(url_arg), &req.url, &err);
-    if (err != NULL) {
-        fprintf(stderr, "Failed to parse url: %s\n", url_arg);
-        return 1;
-    }
-    req.method = MEAPS_IOVEC_STRLIT("GET");
-    meaps_request_add_header(&req, MEAPS_IOVEC_STRLIT("host"), req.url.raw.host);
-    for (i = 0; i < nr_to_add; i++) {
-        meaps_request_add_header(&req, to_add[i].name, to_add[i].value);
-    }
-    free(to_add);
-    client->req = &req;
-    if (req.url.parsed.scheme == HTTPS) {
-        ssl_ctx = SSL_CTX_new(TLS_client_method());
-        meaps_conn_ssl_init(&client->conn, ssl_ctx);
-    }
-    meaps_http1client_connect(client, on_connect, ss_override);
-
-    while (meaps_loop_run(loop, 10) >= 0) {
-        if (client->done)
-            break;
-    }
-    meaps_conn_close(&client->conn);
-    meaps_loop_destroy(loop);
-    meaps_request_dispose(&req);
-    free(client);
-    if (ssl_ctx)
-        SSL_CTX_free(ssl_ctx);
-    return 0;
-usage:
-    usage(progname);
-    return 1;
 }
