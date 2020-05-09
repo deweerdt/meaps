@@ -9,5 +9,8 @@ set(SRCS
     lib/meaps.c
     lib/meaps_ssl.c
     picohttp/picohttpparser.c)
-add_executable(meaps ${SRCS})
+add_library(meaps ${SRCS})
 target_link_libraries(meaps ${OPENSSL_LIBRARIES})
+
+add_executable(single src/single.c)
+target_link_libraries(single meaps)
